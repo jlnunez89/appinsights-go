@@ -8,16 +8,13 @@
 
 // A task runner that calls the Go toolset
 {
-	"version": "0.1.0",
+	"version": "2.0.0",
 	
 	// The command is tsc. Assumes that tsc has been installed using npm install -g typescript
 	"command": "go",
 	
 	// The command is a shell script
-	"isShellCommand": false,
-
-	// Show the output window only if unrecognized errors occur. 
-	"showOutput": "always",
+    "type": "shell",
     
     "windows": {
         "command": "go.exe"
@@ -25,15 +22,30 @@
 	
     "tasks": [
         {
-            "taskName": "build",
-            "args": ["install"],
-            "isBuildCommand": true
+            "label": "build",
+            "type": "shell",
+            "args": [
+                "build",
+                "install"
+            ],
+            "problemMatcher": [],
+            "group": {
+                "_id": "build",
+                "isDefault": false
+            }
         },
         {
-            "taskName": "test",
-            "args": ["test", "-v"],
-            "isBuildCommand": false,
-            "isTestCommand": true
+            "label": "test",
+            "type": "shell",
+            "args": [
+                "test",
+                "-v"
+            ],
+            "problemMatcher": [],
+            "group": {
+                "_id": "test",
+                "isDefault": false
+            }
         }
     ]
 }
