@@ -74,6 +74,9 @@ type TelemetryClient interface {
 
 	// Log a dependency with correlation context
 	TrackRemoteDependencyWithContext(ctx context.Context, name, dependencyType, target string, success bool)
+
+	// Log an availability test result with correlation context
+	TrackAvailabilityWithContext(ctx context.Context, name string, duration time.Duration, success bool)
 }
 
 type telemetryClient struct {
@@ -193,10 +196,15 @@ func (tc *telemetryClient) TrackTraceWithContext(ctx context.Context, message st
 
 // Log an HTTP request with correlation context
 func (tc *telemetryClient) TrackRequestWithContext(ctx context.Context, method, url string, duration time.Duration, responseCode string) {
-	tc.TrackWithContext(ctx, NewRequestTelemetry(method, url, duration, responseCode))
+	tc.TrackWithContext(ctx, NewRequestTelemetryWithContext(ctx, method, url, duration, responseCode))
 }
 
 // Log a dependency with correlation context
 func (tc *telemetryClient) TrackRemoteDependencyWithContext(ctx context.Context, name, dependencyType, target string, success bool) {
-	tc.TrackWithContext(ctx, NewRemoteDependencyTelemetry(name, dependencyType, target, success))
+	tc.TrackWithContext(ctx, NewRemoteDependencyTelemetryWithContext(ctx, name, dependencyType, target, success))
+}
+
+// Log an availability test result with correlation context
+func (tc *telemetryClient) TrackAvailabilityWithContext(ctx context.Context, name string, duration time.Duration, success bool) {
+	tc.TrackWithContext(ctx, NewAvailabilityTelemetryWithContext(ctx, name, duration, success))
 }
