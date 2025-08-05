@@ -1,6 +1,7 @@
 package appinsights
 
 import (
+	"context"
 	"time"
 
 	"github.com/microsoft/ApplicationInsights-Go/appinsights/contracts"
@@ -30,6 +31,9 @@ type TelemetryClient interface {
 	// Submits the specified telemetry item.
 	Track(telemetry Telemetry)
 
+	// Submits the specified telemetry item with correlation context support.
+	TrackWithContext(ctx context.Context, telemetry Telemetry)
+
 	// Log a user action with the specified name
 	TrackEvent(name string)
 
@@ -56,6 +60,20 @@ type TelemetryClient interface {
 	// error or Stringer. The current callstack is collected
 	// automatically.
 	TrackException(err interface{})
+
+	// Context-aware tracking methods for improved correlation support
+
+	// Log a user action with the specified name and correlation context
+	TrackEventWithContext(ctx context.Context, name string)
+
+	// Log a trace message with the specified severity level and correlation context
+	TrackTraceWithContext(ctx context.Context, message string, severity contracts.SeverityLevel)
+
+	// Log an HTTP request with correlation context
+	TrackRequestWithContext(ctx context.Context, method, url string, duration time.Duration, responseCode string)
+
+	// Log a dependency with correlation context
+	TrackRemoteDependencyWithContext(ctx context.Context, name, dependencyType, target string, success bool)
 }
 
 type telemetryClient struct {
@@ -114,6 +132,13 @@ func (tc *telemetryClient) Track(item Telemetry) {
 	}
 }
 
+// Submits the specified telemetry item with correlation context support.
+func (tc *telemetryClient) TrackWithContext(ctx context.Context, item Telemetry) {
+	if tc.isEnabled && item != nil {
+		tc.channel.Send(tc.context.envelopWithContext(ctx, item))
+	}
+}
+
 // Log a user action with the specified name
 func (tc *telemetryClient) TrackEvent(name string) {
 	tc.Track(NewEventTelemetry(name))
@@ -152,4 +177,26 @@ func (tc *telemetryClient) TrackAvailability(name string, duration time.Duration
 // or Stringer.  The current callstack is collected automatically.
 func (tc *telemetryClient) TrackException(err interface{}) {
 	tc.Track(newExceptionTelemetry(err, 1))
+}
+
+// Context-aware tracking methods for improved correlation support
+
+// Log a user action with the specified name and correlation context
+func (tc *telemetryClient) TrackEventWithContext(ctx context.Context, name string) {
+	tc.TrackWithContext(ctx, NewEventTelemetry(name))
+}
+
+// Log a trace message with the specified severity level and correlation context
+func (tc *telemetryClient) TrackTraceWithContext(ctx context.Context, message string, severity contracts.SeverityLevel) {
+	tc.TrackWithContext(ctx, NewTraceTelemetry(message, severity))
+}
+
+// Log an HTTP request with correlation context
+func (tc *telemetryClient) TrackRequestWithContext(ctx context.Context, method, url string, duration time.Duration, responseCode string) {
+	tc.TrackWithContext(ctx, NewRequestTelemetry(method, url, duration, responseCode))
+}
+
+// Log a dependency with correlation context
+func (tc *telemetryClient) TrackRemoteDependencyWithContext(ctx context.Context, name, dependencyType, target string, success bool) {
+	tc.TrackWithContext(ctx, NewRemoteDependencyTelemetry(name, dependencyType, target, success))
 }
