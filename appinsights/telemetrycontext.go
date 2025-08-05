@@ -1,6 +1,7 @@
 package appinsights
 
 import (
+	"context"
 	"strings"
 
 	"github.com/microsoft/ApplicationInsights-Go/appinsights/contracts"
@@ -44,6 +45,12 @@ func (context *TelemetryContext) InstrumentationKey() string {
 // Wraps a telemetry item in an envelope with the information found in this
 // context.
 func (context *TelemetryContext) envelop(item Telemetry) *contracts.Envelope {
+	return context.envelopWithContext(nil, item)
+}
+
+// Wraps a telemetry item in an envelope with the information found in this
+// context and optional Go context for correlation support.
+func (context *TelemetryContext) envelopWithContext(ctx context.Context, item Telemetry) *contracts.Envelope {
 	// Apply common properties
 	if props := item.GetProperties(); props != nil && context.CommonProperties != nil {
 		for k, v := range context.CommonProperties {
@@ -89,7 +96,26 @@ func (context *TelemetryContext) envelop(item Telemetry) *contracts.Envelope {
 
 	// Create operation ID if it does not exist
 	if _, ok := envelope.Tags[contracts.OperationId]; !ok {
-		envelope.Tags[contracts.OperationId] = newUUID().String()
+		// Check if we have correlation context from Go context
+		if ctx != nil {
+			if corrCtx := GetCorrelationContext(ctx); corrCtx != nil {
+				envelope.Tags[contracts.OperationId] = corrCtx.GetOperationID()
+				
+				// Set parent ID if available
+				if parentID := corrCtx.GetParentID(); parentID != "" {
+					envelope.Tags[contracts.OperationParentId] = parentID
+				}
+				
+				// Set operation name if available
+				if corrCtx.OperationName != "" {
+					envelope.Tags[contracts.OperationName] = corrCtx.OperationName
+				}
+			} else {
+				envelope.Tags[contracts.OperationId] = newUUID().String()
+			}
+		} else {
+			envelope.Tags[contracts.OperationId] = newUUID().String()
+		}
 	}
 
 	// Sanitize.
