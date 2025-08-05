@@ -25,6 +25,13 @@ Known gaps include:
 
 We’re constantly assessing opportunities to expand our support for other languages, so follow our [Azure Updates](https://azure.microsoft.com/updates/?query=application%20insights) page to receive the latest SDK news.
 
+## Implementation Plan for Known Gaps
+
+A comprehensive plan to address all the known gaps listed above has been created. See:
+- 📋 **[Implementation Plan Summary](./IMPLEMENTATION_PLAN_SUMMARY.md)** - Quick overview with timeline and priorities
+- 📖 **[Detailed Implementation Plan](./GAPS_IMPLEMENTATION_PLAN.md)** - Complete technical breakdown with tasks, estimates, and dependencies
+
+The plan provides a structured approach to evolving this SDK into a production-ready solution that meets Microsoft's supported SDK standards.
 ## Requirements
 **Install**
 ```
