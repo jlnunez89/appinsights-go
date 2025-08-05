@@ -1,6 +1,7 @@
 package appinsights
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"net/url"
@@ -422,6 +423,61 @@ func NewRequestTelemetry(method, uri string, duration time.Duration, responseCod
 	}
 }
 
+// Creates a new request telemetry item with correlation context support.
+func NewRequestTelemetryWithContext(ctx context.Context, method, uri string, duration time.Duration, responseCode string) *RequestTelemetry {
+	success := true
+	code, err := strconv.Atoi(responseCode)
+	if err == nil {
+		success = code < 400 || code == 401
+	}
+
+	nameUri := uri
+
+	// Sanitize URL for the request name
+	if parsedUrl, err := url.Parse(uri); err == nil {
+		// Remove the query
+		parsedUrl.RawQuery = ""
+		parsedUrl.ForceQuery = false
+
+		// Remove the fragment
+		parsedUrl.Fragment = ""
+
+		// Remove the user info, if any.
+		parsedUrl.User = nil
+
+		// Write back to name
+		nameUri = parsedUrl.String()
+	}
+
+	// Determine ID from correlation context or generate new UUID
+	var id string
+	if ctx != nil {
+		if corrCtx := GetCorrelationContext(ctx); corrCtx != nil {
+			id = corrCtx.SpanID
+		}
+	}
+	if id == "" {
+		id = newUUID().String()
+	}
+
+	return &RequestTelemetry{
+		Name:         fmt.Sprintf("%s %s", method, nameUri),
+		Url:          uri,
+		Id:           id,
+		Duration:     duration,
+		ResponseCode: responseCode,
+		Success:      success,
+		BaseTelemetry: BaseTelemetry{
+			Timestamp:  currentClock.Now().Add(-duration),
+			Tags:       make(contracts.ContextTags),
+			Properties: make(map[string]string),
+		},
+		BaseTelemetryMeasurements: BaseTelemetryMeasurements{
+			Measurements: make(map[string]float64),
+		},
+	}
+}
+
 // Sets the timestamp and duration of this telemetry item based on the provided
 // start and end times.
 func (request *RequestTelemetry) MarkTime(startTime, endTime time.Time) {
@@ -504,6 +560,36 @@ func NewRemoteDependencyTelemetry(name, dependencyType, target string, success b
 	}
 }
 
+// Builds a new Remote Dependency telemetry item with correlation context support.
+func NewRemoteDependencyTelemetryWithContext(ctx context.Context, name, dependencyType, target string, success bool) *RemoteDependencyTelemetry {
+	// Determine ID from correlation context or generate new UUID
+	var id string
+	if ctx != nil {
+		if corrCtx := GetCorrelationContext(ctx); corrCtx != nil {
+			id = corrCtx.SpanID
+		}
+	}
+	if id == "" {
+		id = newUUID().String()
+	}
+
+	return &RemoteDependencyTelemetry{
+		Name:    name,
+		Type:    dependencyType,
+		Target:  target,
+		Success: success,
+		Id:      id,
+		BaseTelemetry: BaseTelemetry{
+			Timestamp:  currentClock.Now(),
+			Tags:       make(contracts.ContextTags),
+			Properties: make(map[string]string),
+		},
+		BaseTelemetryMeasurements: BaseTelemetryMeasurements{
+			Measurements: make(map[string]float64),
+		},
+	}
+}
+
 // Sets the timestamp and duration of this telemetry item based on the provided
 // start and end times.
 func (telem *RemoteDependencyTelemetry) MarkTime(startTime, endTime time.Time) {
@@ -560,6 +646,35 @@ func NewAvailabilityTelemetry(name string, duration time.Duration, success bool)
 		Name:     name,
 		Duration: duration,
 		Success:  success,
+		BaseTelemetry: BaseTelemetry{
+			Timestamp:  currentClock.Now(),
+			Tags:       make(contracts.ContextTags),
+			Properties: make(map[string]string),
+		},
+		BaseTelemetryMeasurements: BaseTelemetryMeasurements{
+			Measurements: make(map[string]float64),
+		},
+	}
+}
+
+// Creates a new availability telemetry item with correlation context support.
+func NewAvailabilityTelemetryWithContext(ctx context.Context, name string, duration time.Duration, success bool) *AvailabilityTelemetry {
+	// Determine ID from correlation context or generate new UUID
+	var id string
+	if ctx != nil {
+		if corrCtx := GetCorrelationContext(ctx); corrCtx != nil {
+			id = corrCtx.SpanID
+		}
+	}
+	if id == "" {
+		id = newUUID().String()
+	}
+
+	return &AvailabilityTelemetry{
+		Name:     name,
+		Duration: duration,
+		Success:  success,
+		Id:       id,
 		BaseTelemetry: BaseTelemetry{
 			Timestamp:  currentClock.Now(),
 			Tags:       make(contracts.ContextTags),
