@@ -1,6 +1,6 @@
 # Correlation Context Usage Examples
 
-This document demonstrates how to use the new correlation context management features in the Application Insights Go SDK.
+This document demonstrates how to use the correlation context management features in the Application Insights Go SDK, including the new helper functions for easier span and operation management.
 
 ## Basic Usage
 
@@ -10,7 +10,6 @@ package main
 import (
     "context"
     "github.com/microsoft/ApplicationInsights-Go/appinsights"
-    "github.com/microsoft/ApplicationInsights-Go/appinsights/contracts"
 )
 
 func main() {
@@ -49,7 +48,7 @@ func processPayment(ctx context.Context, client appinsights.TelemetryClient) {
 
 func fulfillOrder(ctx context.Context, client appinsights.TelemetryClient) {
     // Operations inherit correlation context automatically
-    client.TrackTraceWithContext(ctx, "Starting order fulfillment", contracts.Information)
+    client.TrackTraceWithContext(ctx, "Starting order fulfillment", appinsights.Information)
     
     // Create child operation
     parentCorr := appinsights.GetCorrelationContext(ctx)
@@ -58,6 +57,150 @@ func fulfillOrder(ctx context.Context, client appinsights.TelemetryClient) {
     
     childCtx := appinsights.WithCorrelationContext(ctx, childCorr)
     client.TrackRemoteDependencyWithContext(childCtx, "InventoryAPI", "HTTP", "inventory.service.com", true)
+}
+```
+
+## New Helper Functions for Easier Correlation Management
+
+The SDK now provides convenience functions that make correlation management much simpler:
+
+### Span Management Helpers
+
+```go
+package main
+
+import (
+    "context"
+    "errors"
+    "github.com/microsoft/ApplicationInsights-Go/appinsights"
+)
+
+func main() {
+    client := appinsights.NewTelemetryClient("your-instrumentation-key")
+    ctx := context.Background()
+
+    // Method 1: Using WithSpan for automatic span management
+    err := appinsights.WithSpan(ctx, "ProcessOrder", client, func(spanCtx context.Context) error {
+        // All operations in this function are automatically tracked as part of the span
+        client.TrackEventWithContext(spanCtx, "OrderValidated")
+        
+        // Call other operations with the span context
+        return processOrderSteps(spanCtx, client)
+    })
+    
+    if err != nil {
+        // Error is automatically tracked in the span
+        log.Printf("Order processing failed: %v", err)
+    }
+
+    // Method 2: Manual span management for more control
+    spanCtx, span := appinsights.StartSpan(ctx, "ManualOperation", client)
+    defer span.FinishSpan(spanCtx, true, map[string]string{"custom": "property"})
+    
+    // Do work within the span
+    client.TrackEventWithContext(spanCtx, "ManualEvent")
+}
+
+func processOrderSteps(ctx context.Context, client appinsights.TelemetryClient) error {
+    // Each step can be its own span
+    err := appinsights.WithSpan(ctx, "ValidateInventory", client, func(spanCtx context.Context) error {
+        // Validate inventory
+        return checkInventory(spanCtx, client)
+    })
+    
+    if err != nil {
+        return err
+    }
+    
+    // Another step
+    return appinsights.WithSpan(ctx, "ChargePayment", client, func(spanCtx context.Context) error {
+        return chargePayment(spanCtx, client)
+    })
+}
+```
+
+### HTTP Operation Helpers
+
+```go
+func httpHandler(w http.ResponseWriter, r *http.Request) {
+    client := appinsights.NewTelemetryClient("your-instrumentation-key")
+    
+    // Create HTTP operation helper
+    helper := appinsights.NewHTTPRequestCorrelationHelper(client)
+    
+    // Start HTTP operation (automatically extracts correlation from headers)
+    ctx, httpOp := helper.StartHTTPOperation(r, "HandleAPIRequest")
+    defer httpOp.FinishHTTPOperation(ctx, "200", true)
+    
+    // All operations within this handler will be correlated
+    client.TrackEventWithContext(ctx, "RequestReceived")
+    
+    // Make outgoing HTTP requests with automatic correlation
+    outgoingReq, _ := http.NewRequest("GET", "https://api.example.com/data", nil)
+    httpOp.InjectHeadersForOutgoingRequest(outgoingReq)
+    
+    // Send the request (headers are automatically injected)
+    resp, err := http.DefaultClient.Do(outgoingReq)
+    if err != nil {
+        http.Error(w, "Internal Server Error", 500)
+        return
+    }
+    defer resp.Body.Close()
+    
+    w.WriteHeader(200)
+    w.Write([]byte("Success"))
+}
+```
+
+### Context Builder Pattern
+
+```go
+func advancedCorrelationExample() {
+    client := appinsights.NewTelemetryClient("your-instrumentation-key")
+    
+    // Use builder pattern for complex correlation setup
+    ctx := appinsights.NewCorrelationContextBuilder().
+        WithOperationName("ComplexOperation").
+        WithSampled(true).
+        BuildWithContext(context.Background())
+    
+    // Or create child contexts
+    parentCorr := appinsights.GetCorrelationContext(ctx)
+    childCtx := appinsights.NewChildCorrelationContextBuilder(parentCorr).
+        WithOperationName("ChildOperation").
+        BuildWithContext(ctx)
+    
+    client.TrackEventWithContext(childCtx, "ChildEvent")
+}
+```
+
+### Convenience Functions
+
+```go
+func convenienceFunctionExamples() {
+    client := appinsights.NewTelemetryClient("your-instrumentation-key")
+    ctx := context.Background()
+    
+    // Quick span creation
+    ctx = appinsights.WithNewRootSpan(ctx, "RootOperation")
+    ctx = appinsights.WithChildSpan(ctx, "ChildOperation")
+    
+    // Get or create correlation
+    ctx, corrCtx := appinsights.GetOrCreateSpan(ctx, "EnsureOperation")
+    
+    // Copy correlation to HTTP requests
+    req, _ := http.NewRequest("GET", "https://api.example.com", nil)
+    appinsights.CopyCorrelationToRequest(ctx, req)
+    
+    // Track dependencies with automatic span creation
+    err := appinsights.TrackDependencyWithSpan(ctx, client, "DatabaseQuery", "SQL", "mydb.server.com", true, func(spanCtx context.Context) error {
+        // Database operation here
+        return nil
+    })
+    
+    // Track HTTP dependencies with correlation
+    httpClient := &http.Client{}
+    resp, err := appinsights.TrackHTTPDependency(ctx, client, req, httpClient, "api.example.com")
 }
 ```
 
