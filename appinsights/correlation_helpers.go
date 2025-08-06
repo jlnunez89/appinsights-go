@@ -3,6 +3,7 @@ package appinsights
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"time"
 )
 
