@@ -335,7 +335,7 @@ func TrackHTTPDependency(ctx context.Context, client TelemetryClient, req *http.
 	success := err == nil && resp != nil && resp.StatusCode < 400
 	responseCode := ""
 	if resp != nil {
-		responseCode = resp.Status
+		responseCode = strconv.Itoa(resp.StatusCode)
 	}
 	
 	dependency := NewRemoteDependencyTelemetryWithContext(childCtx, req.URL.String(), "HTTP", target, success)
