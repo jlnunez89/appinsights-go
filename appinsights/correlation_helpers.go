@@ -276,7 +276,12 @@ func WithNewRootSpan(ctx context.Context, operationName string) context.Context 
 // WithChildSpan creates a child correlation context and adds it to the given context
 func WithChildSpan(ctx context.Context, operationName string) context.Context {
 	parentCorr := GetCorrelationContext(ctx)
-	childCorr := NewChildCorrelationContext(parentCorr)
+	var childCorr *CorrelationContext
+	if parentCorr == nil {
+		childCorr = NewCorrelationContext()
+	} else {
+		childCorr = NewChildCorrelationContext(parentCorr)
+	}
 	if operationName != "" {
 		childCorr.OperationName = operationName
 	}
