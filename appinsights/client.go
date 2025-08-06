@@ -80,9 +80,10 @@ type TelemetryClient interface {
 }
 
 type telemetryClient struct {
-	channel   TelemetryChannel
-	context   *TelemetryContext
-	isEnabled bool
+	channel           TelemetryChannel
+	context           *TelemetryContext
+	isEnabled         bool
+	samplingProcessor SamplingProcessor
 }
 
 // Creates a new telemetry client instance that submits telemetry with the
@@ -94,10 +95,17 @@ func NewTelemetryClient(iKey string) TelemetryClient {
 // Creates a new telemetry client instance configured by the specified
 // TelemetryConfiguration object.
 func NewTelemetryClientFromConfig(config *TelemetryConfiguration) TelemetryClient {
+	samplingProcessor := config.SamplingProcessor
+	if samplingProcessor == nil {
+		// Default to no sampling (100% rate) for backward compatibility
+		samplingProcessor = NewDisabledSamplingProcessor()
+	}
+	
 	return &telemetryClient{
-		channel:   NewInMemoryChannel(config),
-		context:   config.setupContext(),
-		isEnabled: true,
+		channel:           NewInMemoryChannel(config),
+		context:           config.setupContext(),
+		isEnabled:         true,
+		samplingProcessor: samplingProcessor,
 	}
 }
 
@@ -131,14 +139,20 @@ func (tc *telemetryClient) SetIsEnabled(isEnabled bool) {
 // Submits the specified telemetry item.
 func (tc *telemetryClient) Track(item Telemetry) {
 	if tc.isEnabled && item != nil {
-		tc.channel.Send(tc.context.envelop(item))
+		envelope := tc.context.envelop(item)
+		if tc.samplingProcessor.ShouldSample(envelope) {
+			tc.channel.Send(envelope)
+		}
 	}
 }
 
 // Submits the specified telemetry item with correlation context support.
 func (tc *telemetryClient) TrackWithContext(ctx context.Context, item Telemetry) {
 	if tc.isEnabled && item != nil {
-		tc.channel.Send(tc.context.envelopWithContext(ctx, item))
+		envelope := tc.context.envelopWithContext(ctx, item)
+		if tc.samplingProcessor.ShouldSample(envelope) {
+			tc.channel.Send(envelope)
+		}
 	}
 }
 
