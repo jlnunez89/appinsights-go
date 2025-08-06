@@ -2,6 +2,7 @@ package appinsights
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -341,7 +342,7 @@ func TestLegacyClientMethodCompatibility(t *testing.T) {
 	client.TrackRemoteDependency("LegacyDep", "HTTP", "example.com", true)
 	client.TrackAvailability("LegacyAvailability", time.Second, true)
 	client.TrackMetric("legacy.metric", 1.0)
-	client.TrackException(NewTraceTelemetry("exception", contracts.Error))
+	client.TrackException(NewExceptionTelemetry(errors.New("exception")))
 	
 	// Client should remain functional
 	if !client.IsEnabled() {

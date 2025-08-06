@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -393,30 +392,35 @@ func TestCorrelationIDFormats(t *testing.T) {
 		traceID     string
 		spanID      string
 		expectValid bool
+		isAllZeros  bool
 	}{
 		{
 			name:        "Standard W3C IDs",
 			traceID:     "abcdef0123456789abcdef0123456789",
 			spanID:      "abcdef0123456789",
 			expectValid: true,
+			isAllZeros:  false,
 		},
 		{
 			name:        "All zeros trace ID (invalid)",
 			traceID:     "00000000000000000000000000000000",
 			spanID:      "abcdef0123456789",
 			expectValid: false,
+			isAllZeros:  true,
 		},
 		{
 			name:        "All zeros span ID (invalid)",
 			traceID:     "abcdef0123456789abcdef0123456789",
 			spanID:      "0000000000000000",
 			expectValid: false,
+			isAllZeros:  true,
 		},
 		{
 			name:        "Maximum hex values",
 			traceID:     "ffffffffffffffffffffffffffffffff",
 			spanID:      "ffffffffffffffff",
 			expectValid: true,
+			isAllZeros:  false,
 		},
 	}
 	
@@ -440,7 +444,7 @@ func TestCorrelationIDFormats(t *testing.T) {
 			} else {
 				// Note: Current implementation doesn't validate all-zeros IDs
 				// This test documents expected behavior for future validation
-				if err == nil && (strings.Contains(tt.name, "zeros")) {
+				if err == nil && tt.isAllZeros {
 					t.Log("Note: All-zeros IDs are currently accepted but may be rejected in future versions")
 				}
 			}
