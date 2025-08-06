@@ -463,3 +463,220 @@ func TestTelemetryContextEnvelopWithoutCorrelation(t *testing.T) {
 		t.Error("Parent ID should not be set when no correlation context")
 	}
 }
+
+// Request-Id header support tests
+
+func TestToRequestID(t *testing.T) {
+	corrCtx := &CorrelationContext{
+		TraceID: "abcdef0123456789abcdef0123456789",
+		SpanID:  "abcdef0123456789",
+	}
+
+	requestID := corrCtx.ToRequestID()
+	expected := "|abcdef0123456789abcdef0123456789.abcdef0123456789."
+
+	if requestID != expected {
+		t.Errorf("Expected Request-Id %s, got %s", expected, requestID)
+	}
+}
+
+func TestParseRequestID(t *testing.T) {
+	tests := []struct {
+		name        string
+		requestID   string
+		expectError bool
+		expectedCtx *CorrelationContext
+	}{
+		{
+			name:        "valid Request-Id format",
+			requestID:   "|abcdef0123456789abcdef0123456789.abcdef0123456789.",
+			expectError: false,
+			expectedCtx: &CorrelationContext{
+				TraceID:    "abcdef0123456789abcdef0123456789",
+				SpanID:     "abcdef0123456789",
+				TraceFlags: 0,
+			},
+		},
+		{
+			name:        "valid Request-Id without pipes",
+			requestID:   "abcdef0123456789abcdef0123456789.abcdef0123456789",
+			expectError: false,
+			expectedCtx: &CorrelationContext{
+				TraceID:    "abcdef0123456789abcdef0123456789",
+				SpanID:     "abcdef0123456789",
+				TraceFlags: 0,
+			},
+		},
+		{
+			name:        "empty Request-Id",
+			requestID:   "",
+			expectError: true,
+		},
+		{
+			name:        "invalid format - no dot separator",
+			requestID:   "|abcdef0123456789abcdef0123456789abcdef0123456789|",
+			expectError: false, // Should create new context
+		},
+		{
+			name:        "legacy short ID",
+			requestID:   "|123.456.",
+			expectError: false, // Should create new context with generated IDs
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ParseRequestID(tt.requestID)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+
+			if result == nil {
+				t.Fatal("Result should not be nil")
+			}
+
+			if tt.expectedCtx != nil {
+				if result.TraceID != tt.expectedCtx.TraceID {
+					t.Errorf("Expected trace ID %s, got %s", tt.expectedCtx.TraceID, result.TraceID)
+				}
+				if result.SpanID != tt.expectedCtx.SpanID {
+					t.Errorf("Expected span ID %s, got %s", tt.expectedCtx.SpanID, result.SpanID)
+				}
+				if result.TraceFlags != tt.expectedCtx.TraceFlags {
+					t.Errorf("Expected trace flags %d, got %d", tt.expectedCtx.TraceFlags, result.TraceFlags)
+				}
+			} else {
+				// For cases where we expect new context to be generated
+				if len(result.TraceID) != 32 {
+					t.Errorf("Expected generated trace ID length 32, got %d", len(result.TraceID))
+				}
+				if len(result.SpanID) != 16 {
+					t.Errorf("Expected generated span ID length 16, got %d", len(result.SpanID))
+				}
+			}
+		})
+	}
+}
+
+func TestCreateChildRequestID(t *testing.T) {
+	// Test with valid parent
+	parentRequestID := "|abcdef0123456789abcdef0123456789.abcdef0123456789."
+	childRequestID := CreateChildRequestID(parentRequestID)
+
+	if childRequestID == "" {
+		t.Fatal("Child Request-Id should not be empty")
+	}
+
+	// Parse both to verify relationship
+	parentCtx, err := ParseRequestID(parentRequestID)
+	if err != nil {
+		t.Fatalf("Failed to parse parent Request-Id: %v", err)
+	}
+
+	childCtx, err := ParseRequestID(childRequestID)
+	if err != nil {
+		t.Fatalf("Failed to parse child Request-Id: %v", err)
+	}
+
+	// Child should inherit trace ID
+	if childCtx.TraceID != parentCtx.TraceID {
+		t.Errorf("Child trace ID %s should match parent %s", childCtx.TraceID, parentCtx.TraceID)
+	}
+
+	// Child should have different span ID
+	if childCtx.SpanID == parentCtx.SpanID {
+		t.Error("Child span ID should be different from parent")
+	}
+
+	// Test with empty parent
+	childOfEmpty := CreateChildRequestID("")
+	if childOfEmpty == "" {
+		t.Error("Child of empty parent should still generate Request-Id")
+	}
+
+	// Test with invalid parent
+	childOfInvalid := CreateChildRequestID("invalid")
+	if childOfInvalid == "" {
+		t.Error("Child of invalid parent should still generate Request-Id")
+	}
+}
+
+func TestRequestIDRoundTrip(t *testing.T) {
+	original := NewCorrelationContext()
+
+	// Convert to Request-Id and back
+	requestID := original.ToRequestID()
+	parsed, err := ParseRequestID(requestID)
+
+	if err != nil {
+		t.Fatalf("Failed to parse generated Request-Id: %v", err)
+	}
+
+	if parsed.TraceID != original.TraceID {
+		t.Errorf("Trace ID mismatch: expected %s, got %s", original.TraceID, parsed.TraceID)
+	}
+	if parsed.SpanID != original.SpanID {
+		t.Errorf("Span ID mismatch: expected %s, got %s", original.SpanID, parsed.SpanID)
+	}
+}
+
+func TestW3CToRequestIDCompatibility(t *testing.T) {
+	// Create correlation context
+	corrCtx := NewCorrelationContext()
+
+	// Get both formats
+	w3cTraceParent := corrCtx.ToW3CTraceParent()
+	requestID := corrCtx.ToRequestID()
+
+	// Parse both
+	w3cParsed, err := ParseW3CTraceParent(w3cTraceParent)
+	if err != nil {
+		t.Fatalf("Failed to parse W3C trace parent: %v", err)
+	}
+
+	requestIDParsed, err := ParseRequestID(requestID)
+	if err != nil {
+		t.Fatalf("Failed to parse Request-Id: %v", err)
+	}
+
+	// Both should have the same trace and span IDs
+	if w3cParsed.TraceID != requestIDParsed.TraceID {
+		t.Errorf("W3C and Request-Id trace IDs should match: %s vs %s", w3cParsed.TraceID, requestIDParsed.TraceID)
+	}
+	if w3cParsed.SpanID != requestIDParsed.SpanID {
+		t.Errorf("W3C and Request-Id span IDs should match: %s vs %s", w3cParsed.SpanID, requestIDParsed.SpanID)
+	}
+}
+
+func TestIsValidHexString(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		{"abcdef0123456789", true},
+		{"ABCDEF0123456789", true},
+		{"0123456789abcdef", true},
+		{"", false},
+		{"ghij", false},
+		{"123g", false},
+		{"123-456", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := isValidHexString(tt.input)
+			if result != tt.expected {
+				t.Errorf("isValidHexString(%q) = %v, expected %v", tt.input, result, tt.expected)
+			}
+		})
+	}
+}

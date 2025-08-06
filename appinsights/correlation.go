@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -153,4 +154,93 @@ func (c *CorrelationContext) GetOperationID() string {
 // This uses the parent span ID if available
 func (c *CorrelationContext) GetParentID() string {
 	return c.ParentSpanID
+}
+
+// Request-Id header support for backward compatibility
+
+// ToRequestID returns a Request-Id header value from the correlation context
+// Format: |trace_id.span_id. (Application Insights legacy format)
+func (c *CorrelationContext) ToRequestID() string {
+	return fmt.Sprintf("|%s.%s.", c.TraceID, c.SpanID)
+}
+
+// ParseRequestID parses a Request-Id header value and returns a CorrelationContext
+// Supports both Application Insights format (|trace_id.span_id.) and hierarchical format
+func ParseRequestID(requestID string) (*CorrelationContext, error) {
+	if requestID == "" {
+		return nil, fmt.Errorf("empty request ID")
+	}
+
+	// Remove leading and trailing pipes and dots
+	requestID = strings.Trim(requestID, "| .")
+
+	// Try Application Insights format: trace_id.span_id
+	if parts := strings.Split(requestID, "."); len(parts) >= 2 {
+		traceID := parts[0]
+		spanID := parts[1]
+
+		// Validate trace ID (should be 32 hex characters for W3C compatibility)
+		if len(traceID) == 32 && isValidHexString(traceID) {
+			// Validate span ID (should be 16 hex characters)
+			if len(spanID) == 16 && isValidHexString(spanID) {
+				return &CorrelationContext{
+					TraceID:    traceID,
+					SpanID:     spanID,
+					TraceFlags: 0, // Default not sampled
+				}, nil
+			}
+		}
+
+		// Handle shorter legacy IDs by padding or generating new ones
+		if len(traceID) < 32 {
+			// Generate new W3C compatible trace ID but keep the legacy span ID if valid
+			newTraceID := generateTraceID()
+			if len(spanID) == 16 && isValidHexString(spanID) {
+				return &CorrelationContext{
+					TraceID:    newTraceID,
+					SpanID:     spanID,
+					TraceFlags: 0,
+				}, nil
+			}
+		}
+	}
+
+	// If we can't parse it properly, generate a new correlation context
+	// but store the original request ID for potential hierarchical relationships
+	return &CorrelationContext{
+		TraceID:    generateTraceID(),
+		SpanID:     generateSpanID(),
+		TraceFlags: 0,
+	}, nil
+}
+
+// CreateChildRequestID creates a child Request-Id from a parent Request-Id
+// This maintains hierarchical relationships in the Application Insights format
+func CreateChildRequestID(parentRequestID string) string {
+	if parentRequestID == "" {
+		// No parent, create new root
+		corrCtx := NewCorrelationContext()
+		return corrCtx.ToRequestID()
+	}
+
+	// Parse parent to get correlation context
+	parentCtx, err := ParseRequestID(parentRequestID)
+	if err != nil {
+		// If parsing fails, create new root
+		corrCtx := NewCorrelationContext()
+		return corrCtx.ToRequestID()
+	}
+
+	// Create child context
+	childCtx := NewChildCorrelationContext(parentCtx)
+	return childCtx.ToRequestID()
+}
+
+// isValidHexString checks if a string contains only hexadecimal characters
+func isValidHexString(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	matched, _ := regexp.MatchString("^[0-9a-fA-F]+$", s)
+	return matched
 }
