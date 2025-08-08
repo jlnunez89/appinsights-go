@@ -91,6 +91,9 @@ type TelemetryClient interface {
 
 	// IsPerformanceCounterCollectionEnabled returns true if performance counter collection is active
 	IsPerformanceCounterCollectionEnabled() bool
+
+	// AutoCollection returns the auto-collection manager for this client (if enabled)
+	AutoCollection() *AutoCollectionManager
 }
 
 type telemetryClient struct {
@@ -100,6 +103,7 @@ type telemetryClient struct {
 	samplingProcessor  SamplingProcessor
 	performanceManager *PerformanceCounterManager
 	errorAutoCollector *ErrorAutoCollector
+	autoCollectionManager *AutoCollectionManager
 }
 
 // Creates a new telemetry client instance that submits telemetry with the
@@ -127,6 +131,11 @@ func NewTelemetryClientFromConfig(config *TelemetryConfiguration) TelemetryClien
 	// Initialize error auto-collection if configured
 	if config.ErrorAutoCollection != nil {
 		client.errorAutoCollector = NewErrorAutoCollector(client, config.ErrorAutoCollection)
+	}
+
+	// Initialize auto-collection manager if configured
+	if config.AutoCollection != nil {
+		client.autoCollectionManager = NewAutoCollectionManager(client, config.AutoCollection)
 	}
 
 	return client
@@ -272,4 +281,9 @@ func (tc *telemetryClient) IsPerformanceCounterCollectionEnabled() bool {
 // Gets the error auto-collector for this client (if enabled)
 func (tc *telemetryClient) ErrorAutoCollector() *ErrorAutoCollector {
 	return tc.errorAutoCollector
+}
+
+// AutoCollection returns the auto-collection manager for this client (if enabled)
+func (tc *telemetryClient) AutoCollection() *AutoCollectionManager {
+	return tc.autoCollectionManager
 }

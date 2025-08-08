@@ -407,6 +407,7 @@ func (c *mockTelemetryClient) StartPerformanceCounterCollection(config Performan
 func (c *mockTelemetryClient) StopPerformanceCounterCollection() {}
 func (c *mockTelemetryClient) IsPerformanceCounterCollectionEnabled() bool { return false }
 func (c *mockTelemetryClient) ErrorAutoCollector() *ErrorAutoCollector { return nil }
+func (c *mockTelemetryClient) AutoCollection() *AutoCollectionManager { return nil }
 
 func TestHTTPHeaderConstants(t *testing.T) {
 	// Verify header constants are correct
