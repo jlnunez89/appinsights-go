@@ -3,6 +3,7 @@ package appinsights
 import (
 	"crypto/md5"
 	"encoding/binary"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -777,6 +778,50 @@ func (r *CustomSamplingRule) Name() string {
 	return r.name
 }
 
+// DefaultSamplingRule provides a more efficient default sampling rule
+type DefaultSamplingRule struct {
+	name         string
+	priority     int
+	samplingRate float64
+}
+
+// NewDefaultSamplingRule creates a default sampling rule with the specified parameters
+func NewDefaultSamplingRule(name string, priority int, samplingRate float64) *DefaultSamplingRule {
+	// Clamp sampling rate
+	if samplingRate < 0 {
+		samplingRate = 0
+	}
+	if samplingRate > 100 {
+		samplingRate = 100
+	}
+
+	return &DefaultSamplingRule{
+		name:         name,
+		priority:     priority,
+		samplingRate: samplingRate,
+	}
+}
+
+// ShouldApply always returns true for the default rule
+func (r *DefaultSamplingRule) ShouldApply(envelope *contracts.Envelope) bool {
+	return true
+}
+
+// GetSamplingRate returns the sampling rate for this rule
+func (r *DefaultSamplingRule) GetSamplingRate() float64 {
+	return r.samplingRate
+}
+
+// GetPriority returns the priority of this rule
+func (r *DefaultSamplingRule) GetPriority() int {
+	return r.priority
+}
+
+// Name returns the name of this rule
+func (r *DefaultSamplingRule) Name() string {
+	return r.name
+}
+
 // CustomRuleEngine manages multiple sampling rules and applies them in priority order
 type CustomRuleEngine struct {
 	rules       []SamplingRule
@@ -787,9 +832,7 @@ type CustomRuleEngine struct {
 // NewCustomRuleEngine creates a new rule engine with default sampling behavior
 func NewCustomRuleEngine(defaultSamplingRate float64) *CustomRuleEngine {
 	// Create a default rule that applies to everything
-	defaultRule := NewCustomSamplingRule("default", 0, defaultSamplingRate, func(envelope *contracts.Envelope) bool {
-		return true // Always applies
-	})
+	defaultRule := NewDefaultSamplingRule("default", 0, defaultSamplingRate)
 
 	engine := &CustomRuleEngine{
 		rules:       make([]SamplingRule, 0),
@@ -810,13 +853,9 @@ func (e *CustomRuleEngine) AddRule(rule SamplingRule) {
 	e.rules = append(e.rules, rule)
 
 	// Sort rules by priority (higher priority first)
-	for i := 0; i < len(e.rules)-1; i++ {
-		for j := i + 1; j < len(e.rules); j++ {
-			if e.rules[i].GetPriority() < e.rules[j].GetPriority() {
-				e.rules[i], e.rules[j] = e.rules[j], e.rules[i]
-			}
-		}
-	}
+	sort.Slice(e.rules, func(i, j int) bool {
+		return e.rules[i].GetPriority() > e.rules[j].GetPriority()
+	})
 }
 
 // RemoveRule removes rules with the specified name (if it's a CustomSamplingRule)

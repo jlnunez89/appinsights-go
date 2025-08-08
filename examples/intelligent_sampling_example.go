@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/microsoft/ApplicationInsights-Go/appinsights"
@@ -26,8 +27,8 @@ func main() {
 				if data, ok := envelope.Data.(*contracts.Data); ok && data.BaseData != nil {
 					if eventData, ok := data.BaseData.(*contracts.EventData); ok {
 						name := eventData.Name
-						return len(name) > 0 && (len(name) > 8 && name[:8] == "critical" ||
-							len(name) > 8 && name[:8] == "business")
+						return len(name) > 0 && (strings.HasPrefix(name, "critical") ||
+							strings.HasPrefix(name, "business"))
 					}
 				}
 			}
@@ -47,7 +48,7 @@ func main() {
 				if data, ok := envelope.Data.(*contracts.Data); ok && data.BaseData != nil {
 					if eventData, ok := data.BaseData.(*contracts.EventData); ok {
 						name := eventData.Name
-						return len(name) > 5 && name[:5] == "debug"
+						return strings.HasPrefix(name, "debug")
 					}
 				}
 			}
