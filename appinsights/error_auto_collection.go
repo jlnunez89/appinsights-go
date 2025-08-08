@@ -182,6 +182,9 @@ func (eac *ErrorAutoCollector) shouldTrackError(err interface{}) bool {
 
 // isIgnoredError checks if the error matches any ignored error patterns
 func (eac *ErrorAutoCollector) isIgnoredError(err interface{}) bool {
+	if err == nil {
+		return false
+	}
 	errStr := eac.getErrorString(err)
 	errType := reflect.TypeOf(err).String()
 
