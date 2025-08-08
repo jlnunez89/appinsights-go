@@ -562,6 +562,33 @@ Comprehensive sampling examples are available:
 - [Adaptive Sampling Example](./examples/adaptive-sampling/) - Volume-based rate adjustment
 - [Intelligent Sampling Example](./examples/intelligent_sampling_example.go) - Custom rules and error priority
 
+### HTTP Client Instrumentation
+
+The SDK provides comprehensive HTTP client instrumentation for automatic dependency tracking of outbound HTTP requests. This enables detailed monitoring of external service calls with timing, correlation, and error tracking.
+
+```go
+// Create instrumented HTTP client
+client := appinsights.NewTelemetryClient("<ikey>")
+httpClient := appinsights.NewHTTPClient(client)
+
+// All requests are automatically tracked as dependencies
+resp, err := httpClient.Get("https://api.example.com/users")
+if err != nil {
+    // Error is automatically tracked
+}
+defer resp.Body.Close()
+```
+
+#### Key Features
+
+- **Automatic Dependency Tracking**: All HTTP requests tracked with precise timing
+- **URL Sanitization**: Sensitive data automatically removed from tracked URLs  
+- **Correlation Support**: Full W3C Trace Context integration for distributed tracing
+- **Error Tracking**: Automatic success/failure detection and error telemetry
+- **Library Support**: Works with standard `http.Client` and popular HTTP libraries
+
+For complete documentation and examples, see: **[HTTP Client Instrumentation Guide](./HTTP_CLIENT_INSTRUMENTATION.md)**
+
 ### Shutdown
 The Go SDK submits data asynchronously.  The [InMemoryChannel](https://godoc.org/github.com/microsoft/ApplicationInsights-Go/appinsights/#InMemoryChannel)
 launches its own goroutine used to accept and send telemetry.  If you're not
