@@ -13,10 +13,8 @@ Insights service where they can be visualized in the Azure Portal.
 This SDK is NOT currently maintained or supported by Microsoft. Azure Monitor only provides support when using our [supported SDKs](https://docs.microsoft.com/en-us/azure/azure-monitor/app/platforms#unsupported-community-sdks), and this SDK does not yet meet that standard.
 
 Known gaps include:
-* Operation correlation is not supported, but this can be managed by the
-  caller through the interfaces that exist today.
-* Sampling is not supported.  The more mature SDKs support dynamic sampling,
-  but at present this does not even support manual sampling.
+* ✅ **Operation correlation** - Fully implemented with W3C Trace Context support and Application Insights correlation
+* ✅ **Sampling** - Comprehensive sampling implementation including fixed-rate, adaptive, and intelligent sampling
 * Automatic collection of events is not supported.  All telemetry must be
   explicitly collected and sent by the user.
 * Offline storage of telemetry is not supported.  The .Net SDK is capable of
@@ -71,6 +69,9 @@ func main() {
 	
 	// Configure the maximum delay before sending queued telemetry:
 	telemetryConfig.MaxBatchInterval = 2 * time.Second
+	
+	// Configure sampling to control telemetry volume (optional):
+	telemetryConfig.SamplingProcessor = appinsights.NewFixedRateSamplingProcessor(50.0) // 50% sampling
 	
 	client := appinsights.NewTelemetryClientFromConfig(telemetryConfig)
 }
@@ -467,6 +468,99 @@ func main() {
 	// ...
 }
 ```
+
+### Sampling
+
+The Go SDK provides comprehensive sampling support to control telemetry volume while maintaining statistical significance. Sampling helps reduce costs and improve performance by transmitting only a representative subset of telemetry data.
+
+#### Fixed-Rate Sampling
+
+Fixed-rate sampling applies a consistent sampling rate to all telemetry:
+
+```go
+config := appinsights.NewTelemetryConfiguration("<ikey>")
+config.SamplingProcessor = appinsights.NewFixedRateSamplingProcessor(25.0) // 25% sampling
+client := appinsights.NewTelemetryClientFromConfig(config)
+```
+
+#### Per-Type Sampling
+
+Different sampling rates can be applied to different telemetry types:
+
+```go
+typeRates := map[appinsights.TelemetryType]float64{
+	appinsights.TelemetryTypeEvent:            50,  // 50% for events
+	appinsights.TelemetryTypeTrace:            10,  // 10% for traces
+	appinsights.TelemetryTypeRequest:          100, // 100% for requests
+	appinsights.TelemetryTypeRemoteDependency: 75,  // 75% for dependencies
+}
+
+config.SamplingProcessor = appinsights.NewPerTypeSamplingProcessor(25, typeRates) // 25% default
+```
+
+#### Adaptive Sampling
+
+Adaptive sampling automatically adjusts rates based on telemetry volume:
+
+```go
+adaptiveConfig := appinsights.AdaptiveSamplingConfig{
+	MaxItemsPerSecond:   100,              // Target volume limit
+	EvaluationWindow:    15 * time.Second, // Evaluation frequency
+	InitialSamplingRate: 100,              // Starting rate (%)
+	MinSamplingRate:     1,                // Minimum rate (%)
+	MaxSamplingRate:     100,              // Maximum rate (%)
+	
+	// Per-type volume limits
+	PerTypeConfigs: map[appinsights.TelemetryType]appinsights.AdaptiveTypeConfig{
+		appinsights.TelemetryTypeEvent: {
+			MaxItemsPerSecond: 50,
+			MinSamplingRate:   5,
+			MaxSamplingRate:   100,
+		},
+	},
+}
+
+config.SamplingProcessor = appinsights.NewAdaptiveSamplingProcessor(adaptiveConfig)
+```
+
+#### Intelligent Sampling
+
+Intelligent sampling combines dependency-aware sampling with custom rules and error prioritization:
+
+```go
+// Creates intelligent sampling with 25% default rate
+intelligentSampler := appinsights.NewIntelligentSamplingProcessor(25.0)
+
+// Add custom rule for high-priority events
+highPriorityRule := appinsights.NewCustomSamplingRule(
+	"business-critical",
+	800,   // High priority
+	100.0, // 100% sampling rate
+	func(envelope *contracts.Envelope) bool {
+		// Custom logic to identify critical events
+		return isCriticalBusinessEvent(envelope)
+	},
+)
+intelligentSampler.AddRule(highPriorityRule)
+
+config.SamplingProcessor = intelligentSampler
+```
+
+#### Key Sampling Features
+
+- **Dependency-Aware**: Related operations with the same operation ID are sampled together for complete traces
+- **Error Priority**: Exceptions, failed requests, failed dependencies, and error-level traces are always sampled (100%)
+- **Deterministic**: Consistent sampling decisions across correlated operations using hash-based sampling
+- **Statistical Accuracy**: Proper sampling metadata ensures accurate aggregations in Application Insights
+- **Custom Rules**: Priority-based rule engine for sophisticated sampling logic
+- **Real-time Adaptation**: Adaptive sampling adjusts rates based on current volume patterns
+
+#### Examples
+
+Comprehensive sampling examples are available:
+- [Basic Sampling Example](./examples/basic_sampling_example.go) - Introduction to all sampling types
+- [Adaptive Sampling Example](./examples/adaptive-sampling/) - Volume-based rate adjustment
+- [Intelligent Sampling Example](./examples/intelligent_sampling_example.go) - Custom rules and error priority
 
 ### Shutdown
 The Go SDK submits data asynchronously.  The [InMemoryChannel](https://godoc.org/github.com/microsoft/ApplicationInsights-Go/appinsights/#InMemoryChannel)
