@@ -3,9 +3,11 @@ package appinsights
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"code.cloudfoundry.org/clock"
 	"github.com/microsoft/ApplicationInsights-Go/appinsights/contracts"
 )
 
@@ -273,6 +275,309 @@ func TestTelemetryClientDefaultSampling(t *testing.T) {
 	
 	if testChannel.getSentCount() != 1 {
 		t.Errorf("Expected 1 telemetry item with default sampling, got %d", testChannel.getSentCount())
+	}
+}
+
+func TestAdaptiveSamplingProcessor_Creation(t *testing.T) {
+	config := AdaptiveSamplingConfig{
+		MaxItemsPerSecond:   50,
+		EvaluationWindow:    10 * time.Second,
+		InitialSamplingRate: 100,
+		MinSamplingRate:     1,
+		MaxSamplingRate:     100,
+		PerTypeConfigs: map[TelemetryType]AdaptiveTypeConfig{
+			TelemetryTypeEvent: {
+				MaxItemsPerSecond: 20,
+				MinSamplingRate:   5,
+				MaxSamplingRate:   100,
+			},
+		},
+	}
+	
+	processor := NewAdaptiveSamplingProcessor(config)
+	
+	if processor.GetSamplingRate() != 100 {
+		t.Errorf("GetSamplingRate() = %v, want 100", processor.GetSamplingRate())
+	}
+	
+	if processor.GetSamplingRateForType(TelemetryTypeEvent) != 100 {
+		t.Errorf("GetSamplingRateForType(Event) = %v, want 100", processor.GetSamplingRateForType(TelemetryTypeEvent))
+	}
+}
+
+func TestAdaptiveSamplingProcessor_DefaultConfig(t *testing.T) {
+	// Test with minimal config - should set sensible defaults
+	config := AdaptiveSamplingConfig{
+		MaxItemsPerSecond: 100,
+	}
+	
+	processor := NewAdaptiveSamplingProcessor(config)
+	
+	if processor.config.EvaluationWindow != 15*time.Second {
+		t.Errorf("EvaluationWindow = %v, want 15s", processor.config.EvaluationWindow)
+	}
+	
+	if processor.config.InitialSamplingRate != 100 {
+		t.Errorf("InitialSamplingRate = %v, want 100", processor.config.InitialSamplingRate)
+	}
+	
+	if processor.config.MinSamplingRate != 1 {
+		t.Errorf("MinSamplingRate = %v, want 1", processor.config.MinSamplingRate)
+	}
+	
+	if processor.config.MaxSamplingRate != 100 {
+		t.Errorf("MaxSamplingRate = %v, want 100", processor.config.MaxSamplingRate)
+	}
+}
+
+func TestAdaptiveSamplingProcessor_VolumeTracking(t *testing.T) {
+	config := AdaptiveSamplingConfig{
+		MaxItemsPerSecond:   10,
+		EvaluationWindow:    5 * time.Second,
+		InitialSamplingRate: 100,
+	}
+	
+	processor := NewAdaptiveSamplingProcessor(config)
+	
+	// Create multiple envelopes and track volume
+	for i := 0; i < 5; i++ {
+		envelope := &contracts.Envelope{
+			Name: "Microsoft.ApplicationInsights.test.Event",
+			IKey: "test-key",
+			Tags: map[string]string{
+				contracts.OperationId: generateTestOperationId(i),
+			},
+		}
+		
+		processor.ShouldSample(envelope)
+	}
+	
+	// Check that volume is tracked
+	rate := processor.GetCurrentVolumeRate()
+	if rate <= 0 {
+		t.Errorf("GetCurrentVolumeRate() = %v, want > 0", rate)
+	}
+}
+
+func TestAdaptiveSamplingProcessor_DeterministicSampling(t *testing.T) {
+	config := AdaptiveSamplingConfig{
+		MaxItemsPerSecond:   100,
+		InitialSamplingRate: 50,
+	}
+	
+	processor := NewAdaptiveSamplingProcessor(config)
+	
+	// Same operation ID should always produce same result
+	envelope := &contracts.Envelope{
+		Name: "Microsoft.ApplicationInsights.test.Event",
+		IKey: "test-key",
+		Tags: map[string]string{
+			contracts.OperationId: "test-operation-id-123",
+		},
+	}
+	
+	firstResult := processor.ShouldSample(envelope)
+	for i := 0; i < 10; i++ {
+		envelope.SampleRate = 0 // Reset to test metadata setting
+		result := processor.ShouldSample(envelope)
+		if result != firstResult {
+			t.Errorf("Sampling decision changed for same operation ID. Expected consistent result.")
+		}
+	}
+}
+
+func TestAdaptiveSamplingProcessor_SamplingMetadata(t *testing.T) {
+	config := AdaptiveSamplingConfig{
+		MaxItemsPerSecond:   1000, // High limit to avoid rate adjustments
+		InitialSamplingRate: 25,
+		EvaluationWindow:    60 * time.Second, // Long window to avoid evaluations
+	}
+	
+	processor := NewAdaptiveSamplingProcessor(config)
+	
+	// Set a recent evaluation time to prevent immediate adjustment
+	processor.lastEvaluation = processor.clock.Now()
+	
+	envelope := &contracts.Envelope{
+		Name: "Microsoft.ApplicationInsights.test.Event",
+		IKey: "test-key",
+		Tags: map[string]string{
+			contracts.OperationId: "test-operation-id",
+		},
+	}
+	
+	processor.ShouldSample(envelope)
+	
+	expectedSampleRate := 100.0 / 25.0 // 4.0
+	if envelope.SampleRate != expectedSampleRate {
+		t.Errorf("SampleRate = %v, want %v", envelope.SampleRate, expectedSampleRate)
+	}
+}
+
+func TestVolumeCounter_Record(t *testing.T) {
+	counter := NewVolumeCounter(5)
+	now := time.Now()
+	
+	// Record some items
+	counter.Record(now)
+	counter.Record(now)
+	counter.Record(now.Add(time.Second))
+	
+	rate := counter.GetRate(now.Add(2 * time.Second))
+	if rate <= 0 {
+		t.Errorf("GetRate() = %v, want > 0", rate)
+	}
+}
+
+func TestVolumeCounter_RateCalculation(t *testing.T) {
+	counter := NewVolumeCounter(3)
+	now := time.Now()
+	
+	// Record 2 items in first second
+	counter.Record(now)
+	counter.Record(now)
+	
+	// Record 3 items in second second
+	counter.Record(now.Add(time.Second))
+	counter.Record(now.Add(time.Second))
+	counter.Record(now.Add(time.Second))
+	
+	// Get rate after 2 seconds - should be (2+3)/2 = 2.5 items/second
+	rate := counter.GetRate(now.Add(2 * time.Second))
+	expected := 2.5
+	tolerance := 0.1
+	
+	if rate < expected-tolerance || rate > expected+tolerance {
+		t.Errorf("GetRate() = %v, want ~%v", rate, expected)
+	}
+}
+
+func TestVolumeCounter_EmptyCounter(t *testing.T) {
+	counter := NewVolumeCounter(5)
+	now := time.Now()
+	
+	rate := counter.GetRate(now)
+	if rate != 0 {
+		t.Errorf("GetRate() on empty counter = %v, want 0", rate)
+	}
+}
+
+func TestTelemetryClientWithAdaptiveSampling(t *testing.T) {
+	config := NewTelemetryConfiguration("test-key")
+	adaptiveConfig := AdaptiveSamplingConfig{
+		MaxItemsPerSecond:   50,
+		InitialSamplingRate: 100,
+	}
+	config.SamplingProcessor = NewAdaptiveSamplingProcessor(adaptiveConfig)
+	
+	client := NewTelemetryClientFromConfig(config)
+	testChannel := &TestTelemetryChannel{}
+	tc := client.(*telemetryClient)
+	tc.channel = testChannel
+	
+	// Track some telemetry
+	client.TrackEvent("test-event")
+	client.TrackTrace("test-trace", contracts.Information)
+	client.TrackMetric("test-metric", 42.0)
+	
+	// All should be sent with 100% initial rate
+	if testChannel.getSentCount() != 3 {
+		t.Errorf("Expected 3 telemetry items, got %d", testChannel.getSentCount())
+	}
+	
+	// Verify that adaptive sampling processor is being used
+	adaptiveProcessor := config.SamplingProcessor.(*AdaptiveSamplingProcessor)
+	if adaptiveProcessor.GetCurrentVolumeRate() <= 0 {
+		t.Errorf("Expected volume tracking to be working")
+	}
+}
+
+func TestAdaptiveSamplingProcessor_PerTypeConfiguration(t *testing.T) {
+	config := AdaptiveSamplingConfig{
+		MaxItemsPerSecond:   100,
+		InitialSamplingRate: 50,
+		PerTypeConfigs: map[TelemetryType]AdaptiveTypeConfig{
+			TelemetryTypeEvent: {
+				MaxItemsPerSecond: 20,
+				MinSamplingRate:   10,
+				MaxSamplingRate:   80,
+			},
+			TelemetryTypeMetric: {
+				MaxItemsPerSecond: 50,
+				MinSamplingRate:   5,
+				MaxSamplingRate:   100,
+			},
+		},
+	}
+	
+	processor := NewAdaptiveSamplingProcessor(config)
+	
+	// Verify per-type rates are initialized
+	eventRate := processor.GetSamplingRateForType(TelemetryTypeEvent)
+	metricRate := processor.GetSamplingRateForType(TelemetryTypeMetric)
+	traceRate := processor.GetSamplingRateForType(TelemetryTypeTrace) // Should use global rate
+	
+	if eventRate != 50 {
+		t.Errorf("Event sampling rate = %v, want 50", eventRate)
+	}
+	
+	if metricRate != 50 {
+		t.Errorf("Metric sampling rate = %v, want 50", metricRate)
+	}
+	
+	if traceRate != 50 {
+		t.Errorf("Trace sampling rate = %v, want 50 (global)", traceRate)
+	}
+}
+
+func TestAdaptiveSamplingProcessor_ConfigValidation(t *testing.T) {
+	tests := []struct {
+		name   string
+		config AdaptiveSamplingConfig
+	}{
+		{
+			name: "Invalid evaluation window",
+			config: AdaptiveSamplingConfig{
+				MaxItemsPerSecond: 100,
+				EvaluationWindow:  -5 * time.Second, // Invalid
+			},
+		},
+		{
+			name: "Invalid initial rate",
+			config: AdaptiveSamplingConfig{
+				MaxItemsPerSecond:   100,
+				InitialSamplingRate: -10, // Invalid
+			},
+		},
+		{
+			name: "Rate bounds validation",
+			config: AdaptiveSamplingConfig{
+				MaxItemsPerSecond:   100,
+				InitialSamplingRate: 50,
+				MinSamplingRate:     80, // Min > Max should be corrected
+				MaxSamplingRate:     60,
+			},
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			processor := NewAdaptiveSamplingProcessor(tt.config)
+			
+			// Should not panic and should have valid configuration
+			if processor.config.EvaluationWindow <= 0 {
+				t.Errorf("EvaluationWindow should be > 0, got %v", processor.config.EvaluationWindow)
+			}
+			
+			if processor.config.InitialSamplingRate <= 0 {
+				t.Errorf("InitialSamplingRate should be > 0, got %v", processor.config.InitialSamplingRate)
+			}
+			
+			if processor.config.MinSamplingRate > processor.config.MaxSamplingRate {
+				t.Errorf("MinSamplingRate (%v) should be <= MaxSamplingRate (%v)", 
+					processor.config.MinSamplingRate, processor.config.MaxSamplingRate)
+			}
+		})
 	}
 }
 
@@ -662,4 +967,232 @@ func (tc *TestTelemetryChannel) getSentCount() int {
 
 func (tc *TestTelemetryChannel) reset() {
 	tc.sentItems = nil
+}
+
+func TestAdaptiveSamplingProcessor_RateAdjustment(t *testing.T) {
+	// Use a mock clock for controlled testing
+	mockClock := NewMockClock()
+	
+	config := AdaptiveSamplingConfig{
+		MaxItemsPerSecond:   5, // Low limit to trigger adjustments
+		EvaluationWindow:    5 * time.Second,
+		InitialSamplingRate: 100,
+		MinSamplingRate:     10,
+		MaxSamplingRate:     100,
+	}
+	
+	processor := NewAdaptiveSamplingProcessor(config)
+	processor.clock = mockClock
+	
+	// Simulate high volume to trigger rate reduction
+	baseTime := mockClock.Now()
+	
+	// Send 10 items per second for 6 seconds (should trigger reduction)
+	for second := 0; second < 6; second++ {
+		currentTime := baseTime.Add(time.Duration(second) * time.Second)
+		mockClock.SetTime(currentTime)
+		
+		for item := 0; item < 10; item++ {
+			envelope := &contracts.Envelope{
+				Name: "Microsoft.ApplicationInsights.test.Event",
+				IKey: "test-key",
+				Tags: map[string]string{
+					contracts.OperationId: generateTestOperationId(second*10 + item),
+				},
+			}
+			processor.ShouldSample(envelope)
+		}
+	}
+	
+	// After high volume, the sampling rate should be reduced
+	finalRate := processor.GetSamplingRate()
+	if finalRate >= 100 {
+		t.Errorf("Expected sampling rate to be reduced from 100, but got %v", finalRate)
+	}
+	
+	// Verify it's above the minimum
+	if finalRate < config.MinSamplingRate {
+		t.Errorf("Sampling rate %v is below minimum %v", finalRate, config.MinSamplingRate)
+	}
+}
+
+func TestAdaptiveSamplingProcessor_PerTypeRateAdjustment(t *testing.T) {
+	mockClock := NewMockClock()
+	
+	config := AdaptiveSamplingConfig{
+		MaxItemsPerSecond:   50, // Global limit
+		EvaluationWindow:    5 * time.Second,
+		InitialSamplingRate: 100,
+		PerTypeConfigs: map[TelemetryType]AdaptiveTypeConfig{
+			TelemetryTypeEvent: {
+				MaxItemsPerSecond: 3, // Lower limit for events
+				MinSamplingRate:   5,
+				MaxSamplingRate:   100,
+			},
+		},
+	}
+	
+	processor := NewAdaptiveSamplingProcessor(config)
+	processor.clock = mockClock
+	
+	baseTime := mockClock.Now()
+	
+	// Send many events to trigger per-type adjustment
+	for second := 0; second < 6; second++ {
+		currentTime := baseTime.Add(time.Duration(second) * time.Second)
+		mockClock.SetTime(currentTime)
+		
+		// Send 8 events per second (exceeds the 3/sec limit for events)
+		for item := 0; item < 8; item++ {
+			envelope := &contracts.Envelope{
+				Name: "Microsoft.ApplicationInsights.test.Event",
+				IKey: "test-key",
+				Tags: map[string]string{
+					contracts.OperationId: generateTestOperationId(second*10 + item),
+				},
+			}
+			processor.ShouldSample(envelope)
+		}
+		
+		// Send some metrics (should not be affected as much)
+		for item := 0; item < 2; item++ {
+			envelope := &contracts.Envelope{
+				Name: "Microsoft.ApplicationInsights.test.Metric",
+				IKey: "test-key",
+				Tags: map[string]string{
+					contracts.OperationId: generateTestOperationId(second*10 + item + 100),
+				},
+			}
+			processor.ShouldSample(envelope)
+		}
+	}
+	
+	// Event sampling rate should be reduced more than global rate
+	eventRate := processor.GetSamplingRateForType(TelemetryTypeEvent)
+	globalRate := processor.GetSamplingRate()
+	
+	if eventRate >= 100 {
+		t.Errorf("Expected event sampling rate to be reduced from 100, but got %v", eventRate)
+	}
+	
+	// Event rate should be lower than global rate due to per-type limits
+	if eventRate > globalRate*1.1 { // Allow small tolerance
+		t.Errorf("Expected event rate (%v) to be similar to or lower than global rate (%v)", eventRate, globalRate)
+	}
+}
+
+func TestAdaptiveSamplingProcessor_VolumeRecovery(t *testing.T) {
+	mockClock := NewMockClock()
+	
+	config := AdaptiveSamplingConfig{
+		MaxItemsPerSecond:   10,
+		EvaluationWindow:    3 * time.Second,
+		InitialSamplingRate: 100,
+		MinSamplingRate:     20,
+		MaxSamplingRate:     100,
+	}
+	
+	processor := NewAdaptiveSamplingProcessor(config)
+	processor.clock = mockClock
+	
+	baseTime := mockClock.Now()
+	
+	// Phase 1: High volume to trigger rate reduction
+	for second := 0; second < 4; second++ {
+		currentTime := baseTime.Add(time.Duration(second) * time.Second)
+		mockClock.SetTime(currentTime)
+		
+		for item := 0; item < 20; item++ { // High volume
+			envelope := &contracts.Envelope{
+				Name: "Microsoft.ApplicationInsights.test.Event",
+				IKey: "test-key",
+				Tags: map[string]string{
+					contracts.OperationId: generateTestOperationId(second*20 + item),
+				},
+			}
+			processor.ShouldSample(envelope)
+		}
+	}
+	
+	reducedRate := processor.GetSamplingRate()
+	if reducedRate >= 100 {
+		t.Errorf("Expected rate to be reduced after high volume, got %v", reducedRate)
+	}
+	
+	// Phase 2: Low volume to allow recovery - need to advance time sufficiently
+	for second := 4; second < 12; second++ { // Longer period for recovery
+		currentTime := baseTime.Add(time.Duration(second) * time.Second)
+		mockClock.SetTime(currentTime)
+		
+		// Very low volume - should allow rate to increase
+		envelope := &contracts.Envelope{
+			Name: "Microsoft.ApplicationInsights.test.Event",
+			IKey: "test-key",
+			Tags: map[string]string{
+				contracts.OperationId: generateTestOperationId(second),
+			},
+		}
+		processor.ShouldSample(envelope)
+	}
+	
+	recoveredRate := processor.GetSamplingRate()
+	if recoveredRate <= reducedRate*1.05 { // Allow for at least 5% improvement
+		t.Errorf("Expected rate to recover from %v after low volume, but got %v", reducedRate, recoveredRate)
+	}
+}
+
+// MockClock for testing time-based functionality
+type MockClock struct {
+	currentTime time.Time
+	mutex       sync.RWMutex
+}
+
+func NewMockClock() *MockClock {
+	return &MockClock{
+		currentTime: time.Now(),
+	}
+}
+
+func (m *MockClock) Now() time.Time {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	return m.currentTime
+}
+
+func (m *MockClock) SetTime(t time.Time) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.currentTime = t
+}
+
+func (m *MockClock) Sleep(d time.Duration) {
+	// For testing, we'll just advance the time
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.currentTime = m.currentTime.Add(d)
+}
+
+func (m *MockClock) Since(t time.Time) time.Duration {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	return m.currentTime.Sub(t)
+}
+
+func (m *MockClock) After(d time.Duration) <-chan time.Time {
+	ch := make(chan time.Time, 1)
+	go func() {
+		time.Sleep(d) // Use real time for simplicity in tests
+		ch <- m.Now()
+	}()
+	return ch
+}
+
+func (m *MockClock) NewTimer(d time.Duration) clock.Timer {
+	// For testing purposes, delegate to the real clock
+	return clock.NewClock().NewTimer(d)
+}
+
+func (m *MockClock) NewTicker(d time.Duration) clock.Ticker {
+	// For testing purposes, delegate to the real clock
+	return clock.NewClock().NewTicker(d)
 }

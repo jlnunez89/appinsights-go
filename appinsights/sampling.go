@@ -4,7 +4,10 @@ import (
 	"crypto/md5"
 	"encoding/binary"
 	"strings"
+	"sync"
+	"time"
 
+	"code.cloudfoundry.org/clock"
 	"github.com/microsoft/ApplicationInsights-Go/appinsights/contracts"
 )
 
@@ -272,4 +275,349 @@ func (p *PerTypeSamplingProcessor) extractTelemetryType(envelopeName string) Tel
 	default:
 		return TelemetryType("")
 	}
+}
+
+// extractTelemetryTypeFromName is a helper function that can be used by other sampling processors
+// to extract telemetry type from envelope names
+func extractTelemetryTypeFromName(envelopeName string) TelemetryType {
+	// Reuse the logic from PerTypeSamplingProcessor
+	processor := &PerTypeSamplingProcessor{}
+	return processor.extractTelemetryType(envelopeName)
+}
+
+// AdaptiveSamplingConfig holds configuration for adaptive sampling
+type AdaptiveSamplingConfig struct {
+	// MaxItemsPerSecond is the target maximum items per second across all telemetry types
+	MaxItemsPerSecond float64
+	
+	// EvaluationWindow is how often to evaluate and adjust sampling rates (default: 15 seconds)
+	EvaluationWindow time.Duration
+	
+	// InitialSamplingRate is the initial sampling rate to start with (0-100, default: 100)
+	InitialSamplingRate float64
+	
+	// MinSamplingRate is the minimum sampling rate allowed (0-100, default: 1)
+	MinSamplingRate float64
+	
+	// MaxSamplingRate is the maximum sampling rate allowed (0-100, default: 100)
+	MaxSamplingRate float64
+	
+	// PerTypeConfigs allows setting different limits per telemetry type
+	PerTypeConfigs map[TelemetryType]AdaptiveTypeConfig
+}
+
+// AdaptiveTypeConfig holds per-type configuration for adaptive sampling
+type AdaptiveTypeConfig struct {
+	// MaxItemsPerSecond for this specific telemetry type
+	MaxItemsPerSecond float64
+	
+	// MinSamplingRate for this type (overrides global setting)
+	MinSamplingRate float64
+	
+	// MaxSamplingRate for this type (overrides global setting)
+	MaxSamplingRate float64
+}
+
+// AdaptiveSamplingProcessor implements volume-based adaptive sampling
+type AdaptiveSamplingProcessor struct {
+	config            AdaptiveSamplingConfig
+	mutex             sync.RWMutex
+	currentRates      map[TelemetryType]float64 // Current sampling rates per type
+	globalRate        float64                   // Global sampling rate
+	lastEvaluation    time.Time
+	volumeCounters    map[TelemetryType]*VolumeCounter
+	globalCounter     *VolumeCounter
+	clock             clock.Clock // For testing
+}
+
+// VolumeCounter tracks telemetry volume over time
+type VolumeCounter struct {
+	counts    []int       // Circular buffer of counts per second
+	times     []time.Time // Timestamps for each bucket
+	index     int         // Current index in circular buffer
+	size      int         // Size of the circular buffer
+	mutex     sync.RWMutex
+}
+
+// NewVolumeCounter creates a new volume counter with specified window size in seconds
+func NewVolumeCounter(windowSize int) *VolumeCounter {
+	return &VolumeCounter{
+		counts: make([]int, windowSize),
+		times:  make([]time.Time, windowSize),
+		size:   windowSize,
+	}
+}
+
+// Record records a telemetry item at the current time
+func (vc *VolumeCounter) Record(timestamp time.Time) {
+	vc.mutex.Lock()
+	defer vc.mutex.Unlock()
+	
+	// Get current second bucket
+	currentSecond := timestamp.Truncate(time.Second)
+	
+	// If this is a new second, advance to next bucket
+	if vc.times[vc.index].IsZero() || !vc.times[vc.index].Equal(currentSecond) {
+		vc.index = (vc.index + 1) % vc.size
+		vc.counts[vc.index] = 0
+		vc.times[vc.index] = currentSecond
+	}
+	
+	vc.counts[vc.index]++
+}
+
+// GetRate returns the current rate (items per second) over the tracked window
+func (vc *VolumeCounter) GetRate(currentTime time.Time) float64 {
+	vc.mutex.RLock()
+	defer vc.mutex.RUnlock()
+	
+	cutoff := currentTime.Add(-time.Duration(vc.size) * time.Second)
+	totalCount := 0
+	validSeconds := 0
+	
+	for i := 0; i < vc.size; i++ {
+		if !vc.times[i].IsZero() && vc.times[i].After(cutoff) {
+			totalCount += vc.counts[i]
+			validSeconds++
+		}
+	}
+	
+	if validSeconds == 0 {
+		return 0
+	}
+	
+	return float64(totalCount) / float64(validSeconds)
+}
+
+// NewAdaptiveSamplingProcessor creates a new adaptive sampling processor
+func NewAdaptiveSamplingProcessor(config AdaptiveSamplingConfig) *AdaptiveSamplingProcessor {
+	// Set defaults
+	if config.EvaluationWindow <= 0 {
+		config.EvaluationWindow = 15 * time.Second
+	}
+	if config.InitialSamplingRate <= 0 {
+		config.InitialSamplingRate = 100
+	}
+	if config.MinSamplingRate <= 0 {
+		config.MinSamplingRate = 1
+	}
+	if config.MaxSamplingRate <= 0 {
+		config.MaxSamplingRate = 100
+	}
+	if config.MaxItemsPerSecond <= 0 {
+		config.MaxItemsPerSecond = 100 // Default to 100 items per second
+	}
+	
+	// Clamp values
+	if config.InitialSamplingRate > 100 {
+		config.InitialSamplingRate = 100
+	}
+	if config.MinSamplingRate > 100 {
+		config.MinSamplingRate = 100
+	}
+	if config.MaxSamplingRate > 100 {
+		config.MaxSamplingRate = 100
+	}
+	if config.MinSamplingRate > config.MaxSamplingRate {
+		config.MinSamplingRate = config.MaxSamplingRate
+	}
+	
+	windowSize := int(config.EvaluationWindow.Seconds()) + 1 // +1 for safety
+	
+	processor := &AdaptiveSamplingProcessor{
+		config:         config,
+		currentRates:   make(map[TelemetryType]float64),
+		globalRate:     config.InitialSamplingRate,
+		lastEvaluation: time.Time{},
+		volumeCounters: make(map[TelemetryType]*VolumeCounter),
+		globalCounter:  NewVolumeCounter(windowSize),
+		clock:          currentClock,
+	}
+	
+	// Initialize per-type counters and rates
+	for telType := range config.PerTypeConfigs {
+		processor.volumeCounters[telType] = NewVolumeCounter(windowSize)
+		processor.currentRates[telType] = config.InitialSamplingRate
+	}
+	
+	return processor
+}
+
+// ShouldSample implements the SamplingProcessor interface with adaptive logic
+func (p *AdaptiveSamplingProcessor) ShouldSample(envelope *contracts.Envelope) bool {
+	now := p.clock.Now()
+	
+	// Extract telemetry type
+	telType := extractTelemetryTypeFromName(envelope.Name)
+	
+	// Record this telemetry item for volume tracking
+	p.globalCounter.Record(now)
+	if counter, exists := p.volumeCounters[telType]; exists {
+		counter.Record(now)
+	}
+	
+	// Check if it's time to evaluate and adjust sampling rates
+	p.mutex.Lock()
+	if p.lastEvaluation.IsZero() || now.Sub(p.lastEvaluation) >= p.config.EvaluationWindow {
+		p.evaluateAndAdjustRates(now)
+		p.lastEvaluation = now
+	}
+	p.mutex.Unlock()
+	
+	// Get current sampling rate for this type
+	p.mutex.RLock()
+	samplingRate := p.globalRate
+	if typeRate, exists := p.currentRates[telType]; exists {
+		samplingRate = typeRate
+	}
+	p.mutex.RUnlock()
+	
+	// Set sampling metadata
+	if samplingRate > 0 {
+		envelope.SampleRate = 100.0 / samplingRate
+	} else {
+		envelope.SampleRate = 0.0
+	}
+	
+	// Apply deterministic hash-based sampling (reuse existing logic)
+	if samplingRate >= 100 {
+		return true
+	}
+	if samplingRate <= 0 {
+		return false
+	}
+	
+	// Use operation ID for deterministic sampling
+	operationId := ""
+	if envelope.Tags != nil {
+		if opId, exists := envelope.Tags[contracts.OperationId]; exists {
+			operationId = opId
+		}
+	}
+	
+	// Fall back to envelope name + ikey if no operation ID
+	if operationId == "" {
+		operationId = envelope.Name + envelope.IKey
+	}
+	
+	// Calculate hash-based sampling decision
+	hash := calculateSamplingHash(operationId)
+	threshold := uint32((samplingRate / 100.0) * 0xFFFFFFFF)
+	
+	return hash < threshold
+}
+
+// evaluateAndAdjustRates adjusts sampling rates based on current volume
+// Must be called with write lock held
+func (p *AdaptiveSamplingProcessor) evaluateAndAdjustRates(now time.Time) {
+	// Get global rate
+	globalRate := p.globalCounter.GetRate(now)
+	
+	// Adjust global rate if needed
+	if globalRate > p.config.MaxItemsPerSecond {
+		// Too much volume, decrease sampling rate
+		targetReduction := globalRate / p.config.MaxItemsPerSecond
+		newRate := p.globalRate / targetReduction
+		
+		// Apply gradual adjustment (maximum 50% change per evaluation)
+		maxChange := p.globalRate * 0.5
+		if p.globalRate-newRate > maxChange {
+			newRate = p.globalRate - maxChange
+		}
+		
+		// Respect minimum
+		if newRate < p.config.MinSamplingRate {
+			newRate = p.config.MinSamplingRate
+		}
+		
+		p.globalRate = newRate
+	} else if globalRate < p.config.MaxItemsPerSecond*0.5 {
+		// Low volume, can increase sampling rate
+		newRate := p.globalRate * 1.2 // Gradual increase
+		
+		// Respect maximum
+		if newRate > p.config.MaxSamplingRate {
+			newRate = p.config.MaxSamplingRate
+		}
+		
+		p.globalRate = newRate
+	}
+	
+	// Adjust per-type rates
+	for telType, typeConfig := range p.config.PerTypeConfigs {
+		if counter, exists := p.volumeCounters[telType]; exists {
+			typeRate := counter.GetRate(now)
+			currentSamplingRate := p.currentRates[telType]
+			
+			if typeRate > typeConfig.MaxItemsPerSecond {
+				// Too much volume for this type
+				targetReduction := typeRate / typeConfig.MaxItemsPerSecond
+				newRate := currentSamplingRate / targetReduction
+				
+				// Apply gradual adjustment
+				maxChange := currentSamplingRate * 0.5
+				if currentSamplingRate-newRate > maxChange {
+					newRate = currentSamplingRate - maxChange
+				}
+				
+				// Respect per-type minimum
+				minRate := typeConfig.MinSamplingRate
+				if minRate <= 0 {
+					minRate = p.config.MinSamplingRate
+				}
+				if newRate < minRate {
+					newRate = minRate
+				}
+				
+				p.currentRates[telType] = newRate
+			} else if typeRate < typeConfig.MaxItemsPerSecond*0.5 {
+				// Low volume for this type, can increase
+				newRate := currentSamplingRate * 1.2
+				
+				// Respect per-type maximum
+				maxRate := typeConfig.MaxSamplingRate
+				if maxRate <= 0 {
+					maxRate = p.config.MaxSamplingRate
+				}
+				if newRate > maxRate {
+					newRate = maxRate
+				}
+				
+				p.currentRates[telType] = newRate
+			}
+		}
+	}
+}
+
+// GetSamplingRate returns the current global sampling rate
+func (p *AdaptiveSamplingProcessor) GetSamplingRate() float64 {
+	p.mutex.RLock()
+	defer p.mutex.RUnlock()
+	return p.globalRate
+}
+
+// GetSamplingRateForType returns the current sampling rate for a specific type
+func (p *AdaptiveSamplingProcessor) GetSamplingRateForType(telType TelemetryType) float64 {
+	p.mutex.RLock()
+	defer p.mutex.RUnlock()
+	
+	if rate, exists := p.currentRates[telType]; exists {
+		return rate
+	}
+	return p.globalRate
+}
+
+// GetCurrentVolumeRate returns the current volume rate (items per second)
+func (p *AdaptiveSamplingProcessor) GetCurrentVolumeRate() float64 {
+	now := p.clock.Now()
+	return p.globalCounter.GetRate(now)
+}
+
+// GetCurrentVolumeRateForType returns the current volume rate for a specific type
+func (p *AdaptiveSamplingProcessor) GetCurrentVolumeRateForType(telType TelemetryType) float64 {
+	if counter, exists := p.volumeCounters[telType]; exists {
+		now := p.clock.Now()
+		return counter.GetRate(now)
+	}
+	return 0
 }
