@@ -25,6 +25,9 @@ type TelemetryConfiguration struct {
 
 	// Customized http client if desired (will use http.DefaultClient otherwise)
 	Client *http.Client
+
+	// Sampling processor for controlling telemetry volume (optional)
+	SamplingProcessor SamplingProcessor
 }
 
 // Creates a new TelemetryConfiguration object with the specified
