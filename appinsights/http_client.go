@@ -220,9 +220,8 @@ func (rt *instrumentedRoundTripper) trackDependency(req *http.Request, resp *htt
 	
 	if resp != nil {
 		resultCode = strconv.Itoa(resp.StatusCode)
-		// Consider 4xx client errors as success except for authentication issues
-		// This matches the pattern used in NewRequestTelemetry
-		success = resp.StatusCode < 400 || resp.StatusCode == 401
+		// Consider only 2xx and 3xx status codes as success, treat all 4xx and 5xx as failures
+		success = resp.StatusCode < 400
 	} else if err != nil {
 		// Network error or other failure
 		success = false
