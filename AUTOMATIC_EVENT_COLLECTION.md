@@ -8,9 +8,7 @@ Automatic event collection includes:
 
 - **HTTP Auto-Collection**: Automatic tracking of HTTP requests and dependencies
 - **Error Auto-Collection**: Automatic error and panic tracking with filtering
-- **Performance Counter Collection**: System and runtime metrics collection  
-- **Database Auto-Instrumentation**: Automatic SQL operation tracking
-- **Message Queue Integration**: Future support for message queue tracking
+- **Performance Counter Collection**: System and runtime metrics collection
 
 ## Quick Start
 
@@ -137,46 +135,7 @@ config.AutoCollection.PerformanceCounters.CustomCollectors = []appinsights.Perfo
 }
 ```
 
-### Database Auto-Instrumentation Settings
 
-```go
-config.AutoCollection.Database.Enabled = true
-config.AutoCollection.Database.EnableCommandCollection = true
-config.AutoCollection.Database.QuerySanitization = true
-config.AutoCollection.Database.MaxQueryLength = 1024
-config.AutoCollection.Database.CollectParameters = false // Keep disabled for security
-```
-
-## Database Auto-Instrumentation
-
-### Registering Instrumented Drivers
-
-```go
-import (
-    _ "github.com/go-sql-driver/mysql"
-    "github.com/microsoft/ApplicationInsights-Go/appinsights"
-)
-
-// Register instrumented MySQL driver
-appinsights.RegisterDatabaseDriver(
-    client,
-    config.AutoCollection.Database,
-    "mysql_instrumented",
-    mysql.NewMySQLDriver(),
-)
-
-// Use instrumented driver
-db, err := sql.Open("mysql_instrumented", "user:password@tcp(localhost:3306)/database")
-```
-
-### Supported Database Operations
-
-Automatically tracked:
-- SQL queries (SELECT, INSERT, UPDATE, DELETE)
-- Transaction operations (BEGIN, COMMIT, ROLLBACK)
-- Connection events (optional)
-- Query timing and success status
-- Automatic query sanitization
 
 ## Error Auto-Collection
 
@@ -258,14 +217,11 @@ config.AutoCollection.PerformanceCounters.CustomCollectors = append(
 
 ### Security Considerations
 
-1. **Query Sanitization**: Keep `QuerySanitization` enabled for database operations
-2. **Parameter Collection**: Keep `CollectParameters` disabled unless necessary
-3. **URL Sanitization**: Keep `URLSanitization` enabled for HTTP operations
-4. **Error Sanitization**: Use built-in sanitizers to remove sensitive data
+1. **URL Sanitization**: Keep `URLSanitization` enabled for HTTP operations
+2. **Error Sanitization**: Use built-in sanitizers to remove sensitive data
 
 ```go
 // Secure configuration
-config.AutoCollection.Database.CollectParameters = false
 config.AutoCollection.HTTP.URLSanitization = true
 config.AutoCollection.Errors.ErrorSanitizers = []appinsights.ErrorSanitizerFunc{
     appinsights.DefaultErrorSanitizer,

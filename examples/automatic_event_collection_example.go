@@ -33,10 +33,6 @@ func main() {
 	config.AutoCollection.HTTP.MaxURLLength = 1024
 	config.AutoCollection.HTTP.HeaderCollection = []string{"User-Agent", "Referer"}
 	
-	// Customize database auto-collection settings
-	config.AutoCollection.Database.MaxQueryLength = 512
-	config.AutoCollection.Database.CollectParameters = false // Keep disabled for security
-	
 	// Customize error auto-collection settings
 	config.AutoCollection.Errors.MaxStackFrames = 20
 	config.AutoCollection.Errors.IgnoredErrors = []string{"connection reset", "context canceled"}
@@ -68,9 +64,9 @@ func main() {
 	fmt.Println("\n2. HTTP Client Auto-Collection:")
 	runHTTPClientExample(autoCollection)
 	
-	// Example 3: Database operations with automatic tracking
-	fmt.Println("\n3. Database Auto-Collection:")
-	runDatabaseExample(autoCollection)
+	// Example 3: Performance counters with automatic collection
+	fmt.Println("\n3. Performance Counter Auto-Collection:")
+	runPerformanceExample(autoCollection)
 	
 	// Example 4: Error auto-collection
 	fmt.Println("\n4. Error Auto-Collection:")
@@ -88,7 +84,6 @@ func main() {
 	fmt.Println("✓ Automatic event collection example completed")
 	fmt.Println("Check your Application Insights instance for the collected telemetry:")
 	fmt.Println("  - HTTP requests and dependencies")
-	fmt.Println("  - Database operations")
 	fmt.Println("  - Error tracking")
 	fmt.Println("  - Performance metrics")
 }
@@ -159,32 +154,22 @@ func runHTTPClientExample(autoCollection *appinsights.AutoCollectionManager) {
 	fmt.Println("   Outbound requests are automatically tracked with timing and success status")
 }
 
-func runDatabaseExample(autoCollection *appinsights.AutoCollectionManager) {
-	// Note: In a real application, you would register the instrumented driver
-	// before opening the database connection
+
+
+func runPerformanceExample(autoCollection *appinsights.AutoCollectionManager) {
+	fmt.Println("   Performance counters are automatically collected in the background:")
+	fmt.Println("   - System metrics (CPU, memory, disk)")
+	fmt.Println("   - Go runtime metrics (goroutines, GC, heap)")
+	fmt.Println("   - Custom business metrics (if configured)")
+	fmt.Println("   - Collection interval: configurable (default 60s)")
 	
-	// Example of how to register an instrumented database driver:
-	// appinsights.RegisterDatabaseDriver(
-	//     autoCollection.client,
-	//     autoCollection.config.Database,
-	//     "mysql_instrumented",
-	//     mysql.NewMySQLDriver(),
-	// )
-	
-	// db, err := sql.Open("mysql_instrumented", "user:password@tcp(localhost:3306)/database")
-	
-	fmt.Println("   Database operations would be automatically tracked:")
-	fmt.Println("   - SQL queries with timing and success status")
-	fmt.Println("   - Connection events (if enabled)")
-	fmt.Println("   - Transaction operations (commit/rollback)")
-	fmt.Println("   - Automatic query sanitization for security")
-	
-	// Simulate what would happen with instrumented database operations
-	fmt.Println("   Example tracked operations:")
-	fmt.Println("     INSERT INTO users (name, email) VALUES (?, ?) - 5ms - Success")
-	fmt.Println("     SELECT * FROM users WHERE id = ? - 2ms - Success")
-	fmt.Println("     UPDATE users SET last_login = NOW() WHERE id = ? - 3ms - Success")
-	fmt.Println("     DELETE FROM sessions WHERE expired < ? - 8ms - Success")
+	// The performance counter collection happens automatically
+	// in the background, so we just show what would be collected
+	fmt.Println("   Example metrics being tracked:")
+	fmt.Println("     • System CPU usage: 15.3%")
+	fmt.Println("     • Available memory: 2.1 GB")
+	fmt.Println("     • Active goroutines: 25")
+	fmt.Println("     • GC heap size: 45.2 MB")
 }
 
 func runErrorCollectionExample(autoCollection *appinsights.AutoCollectionManager) {

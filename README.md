@@ -15,7 +15,7 @@ This SDK is NOT currently maintained or supported by Microsoft. Azure Monitor on
 Known gaps include:
 * ✅ **Operation correlation** - Fully implemented with W3C Trace Context support and Application Insights correlation
 * ✅ **Sampling** - Comprehensive sampling implementation including fixed-rate, adaptive, and intelligent sampling
-* ✅ **Automatic collection of events** - Comprehensive auto-collection for HTTP, errors, performance counters, and database operations
+* ✅ **Automatic collection of events** - Comprehensive auto-collection for HTTP, errors, and performance counters
 * Offline storage of telemetry is not supported.  The .Net SDK is capable of
   spilling events to disk in case of network interruption.  This SDK has no
   such feature.
@@ -638,21 +638,6 @@ Performance counters are collected automatically in the background:
 - System metrics (CPU, memory, disk)
 - Go runtime metrics (goroutines, GC, memory)
 - Custom business metrics
-
-#### Database Auto-Instrumentation
-
-```go
-// Register instrumented database driver
-appinsights.RegisterDatabaseDriver(
-    client,
-    config.AutoCollection.Database,
-    "mysql_instrumented",
-    mysql.NewMySQLDriver(),
-)
-
-// All SQL operations are automatically tracked
-db, err := sql.Open("mysql_instrumented", connectionString)
-```
 
 #### Key Features
 
