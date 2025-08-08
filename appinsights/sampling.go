@@ -40,7 +40,13 @@ func NewFixedRateSamplingProcessor(samplingRate float64) *FixedRateSamplingProce
 // ShouldSample implements deterministic hash-based sampling for consistency
 func (p *FixedRateSamplingProcessor) ShouldSample(envelope *contracts.Envelope) bool {
 	// Set sampling metadata in envelope
-	envelope.SampleRate = 100.0 / p.samplingRate
+	if p.samplingRate > 0 {
+		envelope.SampleRate = 100.0 / p.samplingRate
+	} else {
+		// For 0% sampling, no items are actually sent, so this value won't be used
+		// but we set it to a reasonable value to avoid +Inf
+		envelope.SampleRate = 0.0
+	}
 	
 	if p.samplingRate >= 100 {
 		return true
@@ -173,7 +179,13 @@ func (p *PerTypeSamplingProcessor) ShouldSample(envelope *contracts.Envelope) bo
 	}
 	
 	// Set sampling metadata in envelope
-	envelope.SampleRate = 100.0 / samplingRate
+	if samplingRate > 0 {
+		envelope.SampleRate = 100.0 / samplingRate
+	} else {
+		// For 0% sampling, no items are actually sent, so this value won't be used
+		// but we set it to a reasonable value to avoid +Inf
+		envelope.SampleRate = 0.0
+	}
 	
 	if samplingRate >= 100 {
 		return true

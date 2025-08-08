@@ -581,6 +581,49 @@ func TestTelemetryClientWithPerTypeSampling(t *testing.T) {
 	}
 }
 
+func TestSamplingMetadataEdgeCases(t *testing.T) {
+	tests := []struct {
+		name            string
+		processor       SamplingProcessor
+		expectedSampleRate float64
+	}{
+		{
+			name:            "FixedRate 0% sampling",
+			processor:       NewFixedRateSamplingProcessor(0),
+			expectedSampleRate: 0.0, // Should not be +Inf
+		},
+		{
+			name:            "PerType 0% sampling",
+			processor:       NewPerTypeSamplingProcessor(0, map[TelemetryType]float64{}),
+			expectedSampleRate: 0.0, // Should not be +Inf
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			envelope := &contracts.Envelope{
+				Name: "Microsoft.ApplicationInsights.test.Event",
+				IKey: "test-key",
+				Tags: map[string]string{
+					contracts.OperationId: "test-operation-id",
+				},
+			}
+
+			// Call ShouldSample to set metadata
+			shouldSample := tt.processor.ShouldSample(envelope)
+			
+			// 0% sampling should never sample
+			if shouldSample {
+				t.Errorf("0%% sampling should never sample, got %t", shouldSample)
+			}
+
+			if envelope.SampleRate != tt.expectedSampleRate {
+				t.Errorf("SampleRate = %v, want %v", envelope.SampleRate, tt.expectedSampleRate)
+			}
+		})
+	}
+}
+
 // Helper function to generate test operation IDs
 func generateTestOperationId(seed int) string {
 	return newUUID().String()
