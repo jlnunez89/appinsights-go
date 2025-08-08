@@ -15,9 +15,9 @@ const (
 	RequestIDHeader = "Request-Id"
 
 	// Application Insights specific headers
-	RequestContextHeader          = "Request-Context"
-	RequestContextCorrelationKey  = "appId"
-	RequestContextTargetKey       = "appId"
+	RequestContextHeader         = "Request-Context"
+	RequestContextCorrelationKey = "appId"
+	RequestContextTargetKey      = "appId"
 )
 
 // HTTPMiddleware provides HTTP middleware for automatic header injection and extraction

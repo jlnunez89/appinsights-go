@@ -100,7 +100,7 @@ func NewTelemetryClientFromConfig(config *TelemetryConfiguration) TelemetryClien
 		// Default to no sampling (100% rate) for backward compatibility
 		samplingProcessor = NewDisabledSamplingProcessor()
 	}
-	
+
 	return &telemetryClient{
 		channel:           NewInMemoryChannel(config),
 		context:           config.setupContext(),

@@ -377,7 +377,7 @@ func TestHTTPHeaderConstants(t *testing.T) {
 
 func TestCorrelationRoundTripperWithNilBase(t *testing.T) {
 	middleware := NewHTTPMiddleware()
-	
+
 	corrCtx := NewCorrelationContext()
 	ctx := WithCorrelationContext(context.Background(), corrCtx)
 

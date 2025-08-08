@@ -291,7 +291,7 @@ func TestIDGeneration(t *testing.T) {
 	ids := make(map[string]bool)
 	for i := 0; i < 100; i++ {
 		corrCtx := NewCorrelationContext()
-		
+
 		// Check trace ID uniqueness
 		if ids[corrCtx.TraceID] {
 			t.Errorf("Duplicate trace ID generated: %s", corrCtx.TraceID)
@@ -316,18 +316,18 @@ func isValidHex(s string) bool {
 func TestCorrelationIntegrationWithTelemetryClient(t *testing.T) {
 	// Create a client
 	client := NewTelemetryClient("test-key")
-	
+
 	// Create correlation context
 	corrCtx := NewCorrelationContext()
 	corrCtx.OperationName = "test-operation"
 	ctx := WithCorrelationContext(context.Background(), corrCtx)
-	
+
 	// Create a test event
 	event := NewEventTelemetry("test-event")
-	
+
 	// Track with context
 	client.TrackWithContext(ctx, event)
-	
+
 	// Verify that the telemetry was processed (can't easily inspect the envelope
 	// without more complex test setup, but this tests the integration path)
 	if !client.IsEnabled() {
@@ -340,27 +340,27 @@ func TestCorrelationContextPropagation(t *testing.T) {
 	parent := NewCorrelationContext()
 	parent.OperationName = "parent-operation"
 	parent.TraceFlags = 1
-	
+
 	// Create child context
 	child := NewChildCorrelationContext(parent)
-	
+
 	// Verify correlation propagation
 	if child.TraceID != parent.TraceID {
 		t.Errorf("Child should inherit parent trace ID")
 	}
-	
+
 	if child.SpanID == parent.SpanID {
 		t.Error("Child should have different span ID")
 	}
-	
+
 	if child.ParentSpanID != parent.SpanID {
 		t.Error("Child parent span ID should match parent span ID")
 	}
-	
+
 	if child.OperationName != parent.OperationName {
 		t.Error("Child should inherit operation name")
 	}
-	
+
 	if child.TraceFlags != parent.TraceFlags {
 		t.Error("Child should inherit trace flags")
 	}
@@ -370,7 +370,7 @@ func TestTelemetryClientContextMethods(t *testing.T) {
 	client := NewTelemetryClient("test-key")
 	corrCtx := NewCorrelationContext()
 	ctx := WithCorrelationContext(context.Background(), corrCtx)
-	
+
 	// Test that context methods don't panic
 	client.TrackEventWithContext(ctx, "test-event")
 	client.TrackTraceWithContext(ctx, "test-message", contracts.Information)
@@ -381,24 +381,24 @@ func TestTelemetryClientContextMethods(t *testing.T) {
 func TestTelemetryContextEnvelopWithCorrelation(t *testing.T) {
 	// Create telemetry context
 	telCtx := NewTelemetryContext("test-key")
-	
+
 	// Create correlation context
 	corrCtx := NewCorrelationContext()
 	corrCtx.OperationName = "test-operation"
 	corrCtx.TraceFlags = 1
 	ctx := WithCorrelationContext(context.Background(), corrCtx)
-	
+
 	// Create test telemetry
 	event := NewEventTelemetry("test-event")
-	
+
 	// Envelop with correlation context
 	envelope := telCtx.envelopWithContext(ctx, event)
-	
+
 	// Verify operation ID was set from correlation context
 	if envelope.Tags[contracts.OperationId] != corrCtx.GetOperationID() {
 		t.Errorf("Expected operation ID %s, got %s", corrCtx.GetOperationID(), envelope.Tags[contracts.OperationId])
 	}
-	
+
 	// Verify operation name was set
 	if envelope.Tags[contracts.OperationName] != corrCtx.OperationName {
 		t.Errorf("Expected operation name %s, got %s", corrCtx.OperationName, envelope.Tags[contracts.OperationName])
@@ -408,29 +408,29 @@ func TestTelemetryContextEnvelopWithCorrelation(t *testing.T) {
 func TestTelemetryContextEnvelopWithCorrelationChild(t *testing.T) {
 	// Create telemetry context
 	telCtx := NewTelemetryContext("test-key")
-	
+
 	// Create parent and child correlation contexts
 	parent := NewCorrelationContext()
 	parent.OperationName = "parent-operation"
 	child := NewChildCorrelationContext(parent)
 	ctx := WithCorrelationContext(context.Background(), child)
-	
+
 	// Create test telemetry
 	event := NewEventTelemetry("test-event")
-	
+
 	// Envelop with child correlation context
 	envelope := telCtx.envelopWithContext(ctx, event)
-	
+
 	// Verify operation ID is from child (which inherits trace ID from parent)
 	if envelope.Tags[contracts.OperationId] != child.GetOperationID() {
 		t.Errorf("Expected operation ID %s, got %s", child.GetOperationID(), envelope.Tags[contracts.OperationId])
 	}
-	
+
 	// Verify parent ID is set from child's parent span ID
 	if envelope.Tags[contracts.OperationParentId] != child.GetParentID() {
 		t.Errorf("Expected parent ID %s, got %s", child.GetParentID(), envelope.Tags[contracts.OperationParentId])
 	}
-	
+
 	// Verify operation name was inherited
 	if envelope.Tags[contracts.OperationName] != parent.OperationName {
 		t.Errorf("Expected operation name %s, got %s", parent.OperationName, envelope.Tags[contracts.OperationName])
@@ -440,24 +440,24 @@ func TestTelemetryContextEnvelopWithCorrelationChild(t *testing.T) {
 func TestTelemetryContextEnvelopWithoutCorrelation(t *testing.T) {
 	// Create telemetry context
 	telCtx := NewTelemetryContext("test-key")
-	
+
 	// Create test telemetry
 	event := NewEventTelemetry("test-event")
-	
+
 	// Envelop without correlation context
 	envelope := telCtx.envelopWithContext(context.Background(), event)
-	
+
 	// Verify operation ID was generated (UUID format)
 	operationID := envelope.Tags[contracts.OperationId]
 	if operationID == "" {
 		t.Error("Operation ID should be generated when no correlation context")
 	}
-	
+
 	// Should be UUID format (36 characters with dashes)
 	if len(operationID) != 36 {
 		t.Errorf("Expected UUID format operation ID, got %s", operationID)
 	}
-	
+
 	// Verify no parent ID is set
 	if _, exists := envelope.Tags[contracts.OperationParentId]; exists {
 		t.Error("Parent ID should not be set when no correlation context")

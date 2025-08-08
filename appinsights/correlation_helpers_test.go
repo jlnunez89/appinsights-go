@@ -46,7 +46,7 @@ func TestStartSpan(t *testing.T) {
 
 func TestStartSpanWithParent(t *testing.T) {
 	client := NewTelemetryClient("test-key")
-	
+
 	// Create parent context
 	parentCorr := NewCorrelationContext()
 	parentCorr.OperationName = "parent-operation"
@@ -93,7 +93,7 @@ func TestFinishSpan(t *testing.T) {
 
 func TestFinishSpanWithNilSpan(t *testing.T) {
 	ctx := context.Background()
-	
+
 	// Should not panic
 	var span *SpanContext
 	span.FinishSpan(ctx, true, nil)
@@ -107,17 +107,17 @@ func TestWithSpan(t *testing.T) {
 	executed := false
 	err := WithSpan(ctx, operationName, client, func(spanCtx context.Context) error {
 		executed = true
-		
+
 		// Verify correlation context is available in the function
 		corrCtx := GetCorrelationContext(spanCtx)
 		if corrCtx == nil {
 			t.Error("Span context should have correlation context")
 		}
-		
+
 		if corrCtx.OperationName != operationName {
 			t.Errorf("Expected operation name %s, got %s", operationName, corrCtx.OperationName)
 		}
-		
+
 		return nil
 	})
 
@@ -502,7 +502,7 @@ func TestCopyCorrelationToRequest(t *testing.T) {
 
 func TestCopyCorrelationToRequestNilContext(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://example.com", nil)
-	
+
 	// Should not panic with no correlation context
 	CopyCorrelationToRequest(context.Background(), req)
 
@@ -519,13 +519,13 @@ func TestTrackDependencyWithSpan(t *testing.T) {
 	executed := false
 	err := TrackDependencyWithSpan(ctx, client, "test-dependency", "HTTP", "example.com", true, func(spanCtx context.Context) error {
 		executed = true
-		
+
 		// Verify correlation context is available
 		corrCtx := GetCorrelationContext(spanCtx)
 		if corrCtx == nil {
 			t.Error("Span context should have correlation context")
 		}
-		
+
 		return nil
 	})
 
@@ -562,11 +562,11 @@ func TestTrackHTTPDependency(t *testing.T) {
 		if r.Header.Get("traceparent") == "" {
 			t.Error("Request should have traceparent header")
 		}
-		
+
 		if r.Header.Get("Request-Id") == "" {
 			t.Error("Request should have Request-Id header")
 		}
-		
+
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	}))
@@ -576,7 +576,7 @@ func TestTrackHTTPDependency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create request: %v", err)
 	}
-	
+
 	httpClient := server.Client()
 
 	resp, err := TrackHTTPDependency(ctx, client, req, httpClient, "test-target")
@@ -603,7 +603,7 @@ func TestTrackHTTPDependencyError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create request: %v", err)
 	}
-	
+
 	httpClient := &http.Client{Timeout: 1 * time.Millisecond}
 
 	resp, err := TrackHTTPDependency(ctx, client, req, httpClient, "test-target")

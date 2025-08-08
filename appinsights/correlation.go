@@ -49,10 +49,10 @@ func NewChildCorrelationContext(parent *CorrelationContext) *CorrelationContext 
 	}
 
 	return &CorrelationContext{
-		TraceID:      parent.TraceID,
-		SpanID:       generateSpanID(),
-		ParentSpanID: parent.SpanID,
-		TraceFlags:   parent.TraceFlags,
+		TraceID:       parent.TraceID,
+		SpanID:        generateSpanID(),
+		ParentSpanID:  parent.SpanID,
+		TraceFlags:    parent.TraceFlags,
 		OperationName: parent.OperationName,
 	}
 }
