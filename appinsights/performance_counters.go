@@ -7,6 +7,13 @@ import (
 	"time"
 )
 
+const (
+	// gcPauseCircularBufferSize is the size of the circular buffer for GC pause times
+	gcPauseCircularBufferSize = 256
+	// gcPauseIndexMask is used to calculate the index in the circular buffer for the most recent GC pause
+	gcPauseIndexMask = 255
+)
+
 // PerformanceCounterCollector represents a collector that gathers performance metrics
 type PerformanceCounterCollector interface {
 	// Collect gathers metrics and sends them via the provided telemetry client
@@ -171,7 +178,7 @@ func (r *RuntimeMetricsCollector) Collect(client TelemetryClient) {
 	// GC metrics
 	client.TrackMetric("runtime.gc.num_gc", float64(m.NumGC))
 	client.TrackMetric("runtime.gc.pause_total_ns", float64(m.PauseTotalNs))
-	client.TrackMetric("runtime.gc.pause_ns", float64(m.PauseNs[(m.NumGC+255)%256]))
+	client.TrackMetric("runtime.gc.pause_ns", float64(m.PauseNs[(m.NumGC+gcPauseIndexMask)%gcPauseCircularBufferSize]))
 	client.TrackMetric("runtime.gc.cpu_fraction", m.GCCPUFraction)
 	
 	// Goroutine metrics

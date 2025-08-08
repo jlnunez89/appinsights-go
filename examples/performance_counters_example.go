@@ -8,6 +8,11 @@ import (
 	"github.com/microsoft/ApplicationInsights-Go/appinsights"
 )
 
+const (
+	// memoryAllocationSize is the size of memory allocation for simulation (1MB)
+	memoryAllocationSize = 1024 * 1024
+)
+
 func main() {
 	// Create a telemetry client with your instrumentation key
 	client := appinsights.NewTelemetryClient("your-instrumentation-key")
@@ -78,7 +83,7 @@ func main() {
 		go func(id int) {
 			for j := 0; j < 1000; j++ {
 				// Simulate work that affects memory allocation
-				data := make([]byte, 1024*1024) // 1MB allocation
+				data := make([]byte, memoryAllocationSize) // 1MB allocation
 				_ = data
 				time.Sleep(100 * time.Millisecond)
 			}

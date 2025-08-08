@@ -67,6 +67,12 @@ func (m *mockTelemetryClientForPC) getMetrics() map[string]float64 {
 	return result
 }
 
+func (m *mockTelemetryClientForPC) clearMetrics() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.metrics = make(map[string]float64)
+}
+
 func TestRuntimeMetricsCollector(t *testing.T) {
 	client := newMockTelemetryClientForPC()
 	collector := NewRuntimeMetricsCollector()
@@ -307,7 +313,7 @@ func TestPerformanceCounterManager_StartStop(t *testing.T) {
 	manager.Stop()
 	
 	// Clear metrics and wait a bit more
-	client.metrics = make(map[string]float64)
+	client.clearMetrics()
 	time.Sleep(100 * time.Millisecond)
 	
 	// Should not collect new metrics after stop

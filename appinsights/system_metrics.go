@@ -9,6 +9,13 @@ import (
 	"strings"
 )
 
+const (
+	// cpuIdleFieldIndex is the index of the idle field in /proc/stat CPU line (0-indexed)
+	cpuIdleFieldIndex = 4
+	// diskSectorSize is the standard disk sector size in bytes
+	diskSectorSize = 512
+)
+
 // SystemMetricsCollector collects system-level performance metrics
 type SystemMetricsCollector struct {
 	lastCPUStats *cpuStats
@@ -96,7 +103,7 @@ func (s *SystemMetricsCollector) readCPUStats() (*cpuStats, error) {
 					continue
 				}
 				total += val
-				if i == 4 { // idle is the 4th field (0-indexed)
+				if i == cpuIdleFieldIndex { // idle is the 4th field (0-indexed)
 					idle = val
 				}
 			}
@@ -173,6 +180,9 @@ func (s *SystemMetricsCollector) readMemInfo() (map[string]float64, error) {
 		}
 		
 		key := strings.TrimSuffix(fields[0], ":")
+		if key == "" {
+			continue
+		}
 		valueStr := fields[1]
 		
 		value, err := strconv.ParseFloat(valueStr, 64)
@@ -250,8 +260,8 @@ func (s *SystemMetricsCollector) readDiskStats() (map[string]map[string]float64,
 		writeSectors, _ := strconv.ParseFloat(fields[9], 64)
 		
 		// Convert sectors to bytes (assuming 512 bytes per sector)
-		readBytes := readSectors * 512
-		writeBytes := writeSectors * 512
+		readBytes := readSectors * diskSectorSize
+		writeBytes := writeSectors * diskSectorSize
 		
 		diskStats[device] = map[string]float64{
 			"reads":       reads,
