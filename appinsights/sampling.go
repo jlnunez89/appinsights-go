@@ -621,3 +621,323 @@ func (p *AdaptiveSamplingProcessor) GetCurrentVolumeRateForType(telType Telemetr
 	}
 	return 0
 }
+
+// SamplingRule represents a rule for custom sampling decisions
+type SamplingRule interface {
+	// ShouldApply determines if this rule applies to the given envelope
+	ShouldApply(envelope *contracts.Envelope) bool
+	
+	// GetSamplingRate returns the sampling rate for this rule (0-100)
+	GetSamplingRate() float64
+	
+	// GetPriority returns the priority of this rule (higher numbers = higher priority)
+	GetPriority() int
+}
+
+// ErrorPrioritySamplingRule ensures errors and exceptions are always sampled
+type ErrorPrioritySamplingRule struct {
+	priority int
+}
+
+// NewErrorPrioritySamplingRule creates a rule that always samples errors and exceptions
+func NewErrorPrioritySamplingRule() *ErrorPrioritySamplingRule {
+	return &ErrorPrioritySamplingRule{
+		priority: 1000, // High priority to ensure errors are always sampled
+	}
+}
+
+// ShouldApply returns true if the envelope contains error or exception telemetry
+func (r *ErrorPrioritySamplingRule) ShouldApply(envelope *contracts.Envelope) bool {
+	if envelope == nil {
+		return false
+	}
+	
+	// Check telemetry type
+	telType := extractTelemetryTypeFromName(envelope.Name)
+	if telType == TelemetryTypeException {
+		return true
+	}
+	
+	// Check for failed requests (HTTP errors)
+	if telType == TelemetryTypeRequest {
+		// Access the request data to check success status
+		if envelope.Data != nil {
+			if data, ok := envelope.Data.(*contracts.Data); ok && data.BaseData != nil {
+				if requestData, ok := data.BaseData.(*contracts.RequestData); ok {
+					// Consider 4xx and 5xx status codes as errors
+					if requestData.ResponseCode != "" {
+						if len(requestData.ResponseCode) > 0 {
+							firstChar := requestData.ResponseCode[0]
+							if firstChar == '4' || firstChar == '5' {
+								return true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	// Check for failed dependencies
+	if telType == TelemetryTypeRemoteDependency {
+		if envelope.Data != nil {
+			if data, ok := envelope.Data.(*contracts.Data); ok && data.BaseData != nil {
+				if depData, ok := data.BaseData.(*contracts.RemoteDependencyData); ok {
+					// Check success flag
+					if !depData.Success {
+						return true
+					}
+					// Check result code for errors
+					if depData.ResultCode != "" {
+						if len(depData.ResultCode) > 0 {
+							firstChar := depData.ResultCode[0]
+							if firstChar == '4' || firstChar == '5' {
+								return true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	// Check for error-level traces
+	if telType == TelemetryTypeTrace {
+		if envelope.Data != nil {
+			if data, ok := envelope.Data.(*contracts.Data); ok && data.BaseData != nil {
+				if traceData, ok := data.BaseData.(*contracts.MessageData); ok {
+					// Sample error and critical level traces
+					if traceData.SeverityLevel == contracts.Error || traceData.SeverityLevel == contracts.Critical {
+						return true
+					}
+				}
+			}
+		}
+	}
+	
+	return false
+}
+
+// GetSamplingRate returns 100% for error priority rule (always sample errors)
+func (r *ErrorPrioritySamplingRule) GetSamplingRate() float64 {
+	return 100.0
+}
+
+// GetPriority returns the priority of this rule
+func (r *ErrorPrioritySamplingRule) GetPriority() int {
+	return r.priority
+}
+
+// CustomSamplingRule allows for user-defined sampling logic
+type CustomSamplingRule struct {
+	name         string
+	priority     int
+	samplingRate float64
+	condition    func(envelope *contracts.Envelope) bool
+}
+
+// NewCustomSamplingRule creates a custom sampling rule with the specified parameters
+func NewCustomSamplingRule(name string, priority int, samplingRate float64, condition func(envelope *contracts.Envelope) bool) *CustomSamplingRule {
+	// Clamp sampling rate
+	if samplingRate < 0 {
+		samplingRate = 0
+	}
+	if samplingRate > 100 {
+		samplingRate = 100
+	}
+	
+	return &CustomSamplingRule{
+		name:         name,
+		priority:     priority,
+		samplingRate: samplingRate,
+		condition:    condition,
+	}
+}
+
+// ShouldApply returns true if the custom condition is met
+func (r *CustomSamplingRule) ShouldApply(envelope *contracts.Envelope) bool {
+	if r.condition == nil {
+		return false
+	}
+	return r.condition(envelope)
+}
+
+// GetSamplingRate returns the sampling rate for this rule
+func (r *CustomSamplingRule) GetSamplingRate() float64 {
+	return r.samplingRate
+}
+
+// GetPriority returns the priority of this rule
+func (r *CustomSamplingRule) GetPriority() int {
+	return r.priority
+}
+
+// Name returns the name of this rule
+func (r *CustomSamplingRule) Name() string {
+	return r.name
+}
+
+// CustomRuleEngine manages multiple sampling rules and applies them in priority order
+type CustomRuleEngine struct {
+	rules        []SamplingRule
+	defaultRule  SamplingRule
+	mutex        sync.RWMutex
+}
+
+// NewCustomRuleEngine creates a new rule engine with default sampling behavior
+func NewCustomRuleEngine(defaultSamplingRate float64) *CustomRuleEngine {
+	// Create a default rule that applies to everything
+	defaultRule := NewCustomSamplingRule("default", 0, defaultSamplingRate, func(envelope *contracts.Envelope) bool {
+		return true // Always applies
+	})
+	
+	engine := &CustomRuleEngine{
+		rules:       make([]SamplingRule, 0),
+		defaultRule: defaultRule,
+	}
+	
+	// Add error priority rule by default
+	engine.AddRule(NewErrorPrioritySamplingRule())
+	
+	return engine
+}
+
+// AddRule adds a sampling rule to the engine
+func (e *CustomRuleEngine) AddRule(rule SamplingRule) {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	
+	e.rules = append(e.rules, rule)
+	
+	// Sort rules by priority (higher priority first)
+	for i := 0; i < len(e.rules)-1; i++ {
+		for j := i + 1; j < len(e.rules); j++ {
+			if e.rules[i].GetPriority() < e.rules[j].GetPriority() {
+				e.rules[i], e.rules[j] = e.rules[j], e.rules[i]
+			}
+		}
+	}
+}
+
+// RemoveRule removes rules with the specified name (if it's a CustomSamplingRule)
+func (e *CustomRuleEngine) RemoveRule(name string) {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	
+	filtered := make([]SamplingRule, 0, len(e.rules))
+	for _, rule := range e.rules {
+		if customRule, ok := rule.(*CustomSamplingRule); ok {
+			if customRule.Name() != name {
+				filtered = append(filtered, rule)
+			}
+		} else {
+			// Keep non-custom rules
+			filtered = append(filtered, rule)
+		}
+	}
+	e.rules = filtered
+}
+
+// GetSamplingRate determines the sampling rate for the given envelope
+func (e *CustomRuleEngine) GetSamplingRate(envelope *contracts.Envelope) float64 {
+	e.mutex.RLock()
+	defer e.mutex.RUnlock()
+	
+	// Check rules in priority order
+	for _, rule := range e.rules {
+		if rule.ShouldApply(envelope) {
+			return rule.GetSamplingRate()
+		}
+	}
+	
+	// Use default rule if no other rule applies
+	return e.defaultRule.GetSamplingRate()
+}
+
+// IntelligentSamplingProcessor combines dependency-aware sampling with custom rules and error priority
+type IntelligentSamplingProcessor struct {
+	ruleEngine         *CustomRuleEngine
+	dependencyProcessor SamplingProcessor // Fallback processor for dependency-aware sampling
+	mutex              sync.RWMutex
+}
+
+// NewIntelligentSamplingProcessor creates an intelligent sampling processor
+func NewIntelligentSamplingProcessor(defaultSamplingRate float64) *IntelligentSamplingProcessor {
+	// Use fixed-rate processor as the dependency-aware fallback
+	dependencyProcessor := NewFixedRateSamplingProcessor(defaultSamplingRate)
+	
+	return &IntelligentSamplingProcessor{
+		ruleEngine:         NewCustomRuleEngine(defaultSamplingRate),
+		dependencyProcessor: dependencyProcessor,
+	}
+}
+
+// NewIntelligentSamplingProcessorWithFallback creates an intelligent sampling processor with a custom fallback
+func NewIntelligentSamplingProcessorWithFallback(ruleEngine *CustomRuleEngine, fallbackProcessor SamplingProcessor) *IntelligentSamplingProcessor {
+	return &IntelligentSamplingProcessor{
+		ruleEngine:         ruleEngine,
+		dependencyProcessor: fallbackProcessor,
+	}
+}
+
+// ShouldSample implements the SamplingProcessor interface with intelligent logic
+func (p *IntelligentSamplingProcessor) ShouldSample(envelope *contracts.Envelope) bool {
+	if envelope == nil {
+		return false
+	}
+	
+	p.mutex.RLock()
+	samplingRate := p.ruleEngine.GetSamplingRate(envelope)
+	p.mutex.RUnlock()
+	
+	// Set sampling metadata
+	if samplingRate > 0 {
+		envelope.SampleRate = 100.0 / samplingRate
+	} else {
+		envelope.SampleRate = 0.0
+	}
+	
+	// Handle edge cases
+	if samplingRate >= 100 {
+		return true
+	}
+	if samplingRate <= 0 {
+		return false
+	}
+	
+	// Use the dependency processor's deterministic sampling logic for consistency
+	// This ensures that related operations (same operation ID) are sampled together
+	originalSampleRate := envelope.SampleRate
+	shouldSample := p.dependencyProcessor.ShouldSample(envelope)
+	
+	// Restore our sampling rate metadata (the dependency processor may have overwritten it)
+	envelope.SampleRate = originalSampleRate
+	
+	return shouldSample
+}
+
+// GetSamplingRate returns the default sampling rate
+func (p *IntelligentSamplingProcessor) GetSamplingRate() float64 {
+	return p.dependencyProcessor.GetSamplingRate()
+}
+
+// AddRule adds a custom sampling rule
+func (p *IntelligentSamplingProcessor) AddRule(rule SamplingRule) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	p.ruleEngine.AddRule(rule)
+}
+
+// RemoveRule removes a custom sampling rule by name
+func (p *IntelligentSamplingProcessor) RemoveRule(name string) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	p.ruleEngine.RemoveRule(name)
+}
+
+// GetRuleEngine returns the rule engine for advanced configuration
+func (p *IntelligentSamplingProcessor) GetRuleEngine() *CustomRuleEngine {
+	p.mutex.RLock()
+	defer p.mutex.RUnlock()
+	return p.ruleEngine
+}

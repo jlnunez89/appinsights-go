@@ -1196,3 +1196,637 @@ func (m *MockClock) NewTicker(d time.Duration) clock.Ticker {
 	// For testing purposes, delegate to the real clock
 	return clock.NewClock().NewTicker(d)
 }
+
+// Tests for Intelligent Sampling features
+
+func TestErrorPrioritySamplingRule_ShouldApply(t *testing.T) {
+	rule := NewErrorPrioritySamplingRule()
+	
+	tests := []struct {
+		name     string
+		envelope *contracts.Envelope
+		expected bool
+	}{
+		{
+			name: "Exception telemetry should apply",
+			envelope: &contracts.Envelope{
+				Name: "Microsoft.ApplicationInsights.test.Exception",
+				IKey: "test-key",
+			},
+			expected: true,
+		},
+		{
+			name: "Failed request (4xx) should apply",
+			envelope: &contracts.Envelope{
+				Name: "Microsoft.ApplicationInsights.test.Request",
+				IKey: "test-key",
+				Data: &contracts.Data{
+					BaseData: &contracts.RequestData{
+						ResponseCode: "404",
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "Failed request (5xx) should apply",
+			envelope: &contracts.Envelope{
+				Name: "Microsoft.ApplicationInsights.test.Request",
+				IKey: "test-key",
+				Data: &contracts.Data{
+					BaseData: &contracts.RequestData{
+						ResponseCode: "500",
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "Successful request should not apply",
+			envelope: &contracts.Envelope{
+				Name: "Microsoft.ApplicationInsights.test.Request",
+				IKey: "test-key",
+				Data: &contracts.Data{
+					BaseData: &contracts.RequestData{
+						ResponseCode: "200",
+						Success:      true,
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Failed dependency should apply",
+			envelope: &contracts.Envelope{
+				Name: "Microsoft.ApplicationInsights.test.RemoteDependency",
+				IKey: "test-key",
+				Data: &contracts.Data{
+					BaseData: &contracts.RemoteDependencyData{
+						Success: false,
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "Successful dependency should not apply",
+			envelope: &contracts.Envelope{
+				Name: "Microsoft.ApplicationInsights.test.RemoteDependency",
+				IKey: "test-key",
+				Data: &contracts.Data{
+					BaseData: &contracts.RemoteDependencyData{
+						Success: true,
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Error level trace should apply",
+			envelope: &contracts.Envelope{
+				Name: "Microsoft.ApplicationInsights.test.Message",
+				IKey: "test-key",
+				Data: &contracts.Data{
+					BaseData: &contracts.MessageData{
+						SeverityLevel: contracts.Error,
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "Critical level trace should apply",
+			envelope: &contracts.Envelope{
+				Name: "Microsoft.ApplicationInsights.test.Message",
+				IKey: "test-key",
+				Data: &contracts.Data{
+					BaseData: &contracts.MessageData{
+						SeverityLevel: contracts.Critical,
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "Info level trace should not apply",
+			envelope: &contracts.Envelope{
+				Name: "Microsoft.ApplicationInsights.test.Message",
+				IKey: "test-key",
+				Data: &contracts.Data{
+					BaseData: &contracts.MessageData{
+						SeverityLevel: contracts.Information,
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Regular event should not apply",
+			envelope: &contracts.Envelope{
+				Name: "Microsoft.ApplicationInsights.test.Event",
+				IKey: "test-key",
+			},
+			expected: false,
+		},
+		{
+			name: "Nil envelope should not apply",
+			envelope: nil,
+			expected: false,
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := rule.ShouldApply(tt.envelope)
+			if result != tt.expected {
+				t.Errorf("ShouldApply() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestErrorPrioritySamplingRule_Properties(t *testing.T) {
+	rule := NewErrorPrioritySamplingRule()
+	
+	if rate := rule.GetSamplingRate(); rate != 100.0 {
+		t.Errorf("GetSamplingRate() = %v, want 100.0", rate)
+	}
+	
+	if priority := rule.GetPriority(); priority != 1000 {
+		t.Errorf("GetPriority() = %v, want 1000", priority)
+	}
+}
+
+func TestCustomSamplingRule(t *testing.T) {
+	// Create a rule that applies to events with "important" in the name
+	rule := NewCustomSamplingRule("important-events", 500, 75.0, func(envelope *contracts.Envelope) bool {
+		if envelope == nil {
+			return false
+		}
+		telType := extractTelemetryTypeFromName(envelope.Name)
+		if telType == TelemetryTypeEvent {
+			if envelope.Data != nil {
+				if data, ok := envelope.Data.(*contracts.Data); ok && data.BaseData != nil {
+					if eventData, ok := data.BaseData.(*contracts.EventData); ok {
+						return strings.Contains(eventData.Name, "important")
+					}
+				}
+			}
+		}
+		return false
+	})
+	
+	tests := []struct {
+		name     string
+		envelope *contracts.Envelope
+		expected bool
+	}{
+		{
+			name: "Important event should apply",
+			envelope: &contracts.Envelope{
+				Name: "Microsoft.ApplicationInsights.test.Event",
+				Data: &contracts.Data{
+					BaseData: &contracts.EventData{
+						Name: "important-business-event",
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "Regular event should not apply",
+			envelope: &contracts.Envelope{
+				Name: "Microsoft.ApplicationInsights.test.Event",
+				Data: &contracts.Data{
+					BaseData: &contracts.EventData{
+						Name: "regular-event",
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Non-event should not apply",
+			envelope: &contracts.Envelope{
+				Name: "Microsoft.ApplicationInsights.test.Metric",
+			},
+			expected: false,
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := rule.ShouldApply(tt.envelope)
+			if result != tt.expected {
+				t.Errorf("ShouldApply() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+	
+	// Test properties
+	if rule.Name() != "important-events" {
+		t.Errorf("Name() = %v, want 'important-events'", rule.Name())
+	}
+	
+	if rule.GetPriority() != 500 {
+		t.Errorf("GetPriority() = %v, want 500", rule.GetPriority())
+	}
+	
+	if rule.GetSamplingRate() != 75.0 {
+		t.Errorf("GetSamplingRate() = %v, want 75.0", rule.GetSamplingRate())
+	}
+}
+
+func TestCustomSamplingRule_RateClamping(t *testing.T) {
+	tests := []struct {
+		input    float64
+		expected float64
+	}{
+		{-10, 0},   // Negative should be clamped to 0
+		{150, 100}, // > 100 should be clamped to 100
+		{50, 50},   // Valid value should remain unchanged
+	}
+	
+	for _, tt := range tests {
+		rule := NewCustomSamplingRule("test", 100, tt.input, func(envelope *contracts.Envelope) bool {
+			return true
+		})
+		
+		if rate := rule.GetSamplingRate(); rate != tt.expected {
+			t.Errorf("NewCustomSamplingRule with rate %v: GetSamplingRate() = %v, want %v", 
+				tt.input, rate, tt.expected)
+		}
+	}
+}
+
+func TestCustomRuleEngine(t *testing.T) {
+	engine := NewCustomRuleEngine(50.0) // 50% default rate
+	
+	// Add custom rules
+	highPriorityRule := NewCustomSamplingRule("high-priority", 800, 100.0, func(envelope *contracts.Envelope) bool {
+		return strings.Contains(envelope.Name, "high-priority")
+	})
+	
+	lowPriorityRule := NewCustomSamplingRule("low-priority", 200, 10.0, func(envelope *contracts.Envelope) bool {
+		return strings.Contains(envelope.Name, "low-priority")
+	})
+	
+	engine.AddRule(highPriorityRule)
+	engine.AddRule(lowPriorityRule)
+	
+	tests := []struct {
+		name          string
+		envelopeName  string
+		expectedRate  float64
+	}{
+		{
+			name:         "High priority rule should take precedence",
+			envelopeName: "Microsoft.ApplicationInsights.high-priority.Event",
+			expectedRate: 100.0,
+		},
+		{
+			name:         "Low priority rule should apply when high priority doesn't",
+			envelopeName: "Microsoft.ApplicationInsights.low-priority.Event",
+			expectedRate: 10.0,
+		},
+		{
+			name:         "Exception should be sampled at 100% (error priority rule)",
+			envelopeName: "Microsoft.ApplicationInsights.test.Exception",
+			expectedRate: 100.0,
+		},
+		{
+			name:         "Regular envelope should use default rate",
+			envelopeName: "Microsoft.ApplicationInsights.test.Event",
+			expectedRate: 50.0,
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			envelope := &contracts.Envelope{
+				Name: tt.envelopeName,
+				IKey: "test-key",
+			}
+			
+			rate := engine.GetSamplingRate(envelope)
+			if rate != tt.expectedRate {
+				t.Errorf("GetSamplingRate() = %v, want %v", rate, tt.expectedRate)
+			}
+		})
+	}
+}
+
+func TestCustomRuleEngine_RuleManagement(t *testing.T) {
+	engine := NewCustomRuleEngine(25.0)
+	
+	// Add a custom rule
+	rule := NewCustomSamplingRule("test-rule", 300, 80.0, func(envelope *contracts.Envelope) bool {
+		return strings.Contains(envelope.Name, "test")
+	})
+	
+	engine.AddRule(rule)
+	
+	// Test that the rule is applied
+	envelope := &contracts.Envelope{
+		Name: "Microsoft.ApplicationInsights.test.Event",
+		IKey: "test-key",
+	}
+	
+	rate := engine.GetSamplingRate(envelope)
+	if rate != 80.0 {
+		t.Errorf("GetSamplingRate() after adding rule = %v, want 80.0", rate)
+	}
+	
+	// Remove the rule
+	engine.RemoveRule("test-rule")
+	
+	// Test that default rate is used
+	rate = engine.GetSamplingRate(envelope)
+	if rate != 25.0 {
+		t.Errorf("GetSamplingRate() after removing rule = %v, want 25.0", rate)
+	}
+}
+
+func TestIntelligentSamplingProcessor_Creation(t *testing.T) {
+	processor := NewIntelligentSamplingProcessor(60.0)
+	
+	if processor.GetSamplingRate() != 60.0 {
+		t.Errorf("GetSamplingRate() = %v, want 60.0", processor.GetSamplingRate())
+	}
+	
+	// Test that rule engine is properly initialized
+	ruleEngine := processor.GetRuleEngine()
+	if ruleEngine == nil {
+		t.Error("GetRuleEngine() returned nil")
+	}
+}
+
+func TestIntelligentSamplingProcessor_ErrorPriority(t *testing.T) {
+	processor := NewIntelligentSamplingProcessor(10.0) // Low default rate
+	
+	// Test exception telemetry - should always be sampled
+	exceptionEnvelope := &contracts.Envelope{
+		Name: "Microsoft.ApplicationInsights.test.Exception",
+		IKey: "test-key",
+		Tags: map[string]string{
+			contracts.OperationId: "test-operation-123",
+		},
+	}
+	
+	// Test multiple times to ensure consistency
+	for i := 0; i < 10; i++ {
+		if !processor.ShouldSample(exceptionEnvelope) {
+			t.Errorf("Exception should always be sampled, but got false on iteration %d", i)
+		}
+		
+		// Check that sample rate is set correctly for exceptions
+		if exceptionEnvelope.SampleRate != 1.0 {
+			t.Errorf("Exception SampleRate = %v, want 1.0", exceptionEnvelope.SampleRate)
+		}
+	}
+	
+	// Test failed request - should always be sampled
+	failedRequestEnvelope := &contracts.Envelope{
+		Name: "Microsoft.ApplicationInsights.test.Request",
+		IKey: "test-key",
+		Tags: map[string]string{
+			contracts.OperationId: "test-operation-456",
+		},
+		Data: &contracts.Data{
+			BaseData: &contracts.RequestData{
+				ResponseCode: "500",
+			},
+		},
+	}
+	
+	if !processor.ShouldSample(failedRequestEnvelope) {
+		t.Error("Failed request should always be sampled")
+	}
+	
+	// Test successful request with low sampling rate - may or may not be sampled
+	successfulRequestEnvelope := &contracts.Envelope{
+		Name: "Microsoft.ApplicationInsights.test.Request",
+		IKey: "test-key",
+		Tags: map[string]string{
+			contracts.OperationId: "test-operation-789",
+		},
+		Data: &contracts.Data{
+			BaseData: &contracts.RequestData{
+				ResponseCode: "200",
+				Success:      true,
+			},
+		},
+	}
+	
+	processor.ShouldSample(successfulRequestEnvelope)
+	// Should have sample rate reflecting the 10% default rate
+	expectedSampleRate := 100.0 / 10.0 // 10.0
+	if successfulRequestEnvelope.SampleRate != expectedSampleRate {
+		t.Errorf("Successful request SampleRate = %v, want %v", successfulRequestEnvelope.SampleRate, expectedSampleRate)
+	}
+}
+
+func TestIntelligentSamplingProcessor_DependencyAware(t *testing.T) {
+	processor := NewIntelligentSamplingProcessor(50.0)
+	
+	// Test that envelopes with the same operation ID have consistent sampling decisions
+	operationId := "test-operation-consistency"
+	
+	envelopes := []*contracts.Envelope{
+		{
+			Name: "Microsoft.ApplicationInsights.test.Request",
+			IKey: "test-key",
+			Tags: map[string]string{
+				contracts.OperationId: operationId,
+			},
+			Data: &contracts.Data{
+				BaseData: &contracts.RequestData{
+					ResponseCode: "200",
+				},
+			},
+		},
+		{
+			Name: "Microsoft.ApplicationInsights.test.RemoteDependency",
+			IKey: "test-key",
+			Tags: map[string]string{
+				contracts.OperationId: operationId,
+			},
+			Data: &contracts.Data{
+				BaseData: &contracts.RemoteDependencyData{
+					Success: true,
+				},
+			},
+		},
+		{
+			Name: "Microsoft.ApplicationInsights.test.Event",
+			IKey: "test-key",
+			Tags: map[string]string{
+				contracts.OperationId: operationId,
+			},
+		},
+	}
+	
+	// All envelopes with the same operation ID should have the same sampling decision
+	firstResult := processor.ShouldSample(envelopes[0])
+	
+	for i, envelope := range envelopes[1:] {
+		result := processor.ShouldSample(envelope)
+		if result != firstResult {
+			t.Errorf("Envelope %d with same operation ID should have same sampling decision. Expected %v, got %v", 
+				i+1, firstResult, result)
+		}
+	}
+}
+
+func TestIntelligentSamplingProcessor_CustomRules(t *testing.T) {
+	processor := NewIntelligentSamplingProcessor(20.0)
+	
+	// Add a custom rule for high-priority events
+	customRule := NewCustomSamplingRule("high-priority-events", 600, 90.0, func(envelope *contracts.Envelope) bool {
+		if envelope.Data != nil {
+			if data, ok := envelope.Data.(*contracts.Data); ok && data.BaseData != nil {
+				if eventData, ok := data.BaseData.(*contracts.EventData); ok {
+					if eventData.Properties != nil {
+						if priority, exists := eventData.Properties["priority"]; exists {
+							return priority == "high"
+						}
+					}
+				}
+			}
+		}
+		return false
+	})
+	
+	processor.AddRule(customRule)
+	
+	// Test high-priority event
+	highPriorityEnvelope := &contracts.Envelope{
+		Name: "Microsoft.ApplicationInsights.test.Event",
+		IKey: "test-key",
+		Tags: map[string]string{
+			contracts.OperationId: "test-high-priority",
+		},
+		Data: &contracts.Data{
+			BaseData: &contracts.EventData{
+				Name: "business-event",
+				Properties: map[string]string{
+					"priority": "high",
+				},
+			},
+		},
+	}
+	
+	// Should use the custom rule's 90% rate, so sample rate should be 100/90 ≈ 1.11
+	processor.ShouldSample(highPriorityEnvelope)
+	expectedSampleRate := 100.0 / 90.0
+	tolerance := 0.01
+	
+	if abs(highPriorityEnvelope.SampleRate-expectedSampleRate) > tolerance {
+		t.Errorf("High priority event SampleRate = %v, want ~%v", highPriorityEnvelope.SampleRate, expectedSampleRate)
+	}
+	
+	// Test regular event - should use default 20% rate
+	regularEnvelope := &contracts.Envelope{
+		Name: "Microsoft.ApplicationInsights.test.Event",
+		IKey: "test-key",
+		Tags: map[string]string{
+			contracts.OperationId: "test-regular",
+		},
+		Data: &contracts.Data{
+			BaseData: &contracts.EventData{
+				Name: "regular-event",
+			},
+		},
+	}
+	
+	processor.ShouldSample(regularEnvelope)
+	expectedSampleRate = 100.0 / 20.0 // 5.0
+	
+	if regularEnvelope.SampleRate != expectedSampleRate {
+		t.Errorf("Regular event SampleRate = %v, want %v", regularEnvelope.SampleRate, expectedSampleRate)
+	}
+	
+	// Remove the custom rule
+	processor.RemoveRule("high-priority-events")
+	
+	// Test that high-priority event now uses default rate
+	processor.ShouldSample(highPriorityEnvelope)
+	if highPriorityEnvelope.SampleRate != expectedSampleRate {
+		t.Errorf("After removing rule, SampleRate = %v, want %v", highPriorityEnvelope.SampleRate, expectedSampleRate)
+	}
+}
+
+func TestIntelligentSamplingProcessor_WithFallbackProcessor(t *testing.T) {
+	// Create custom rule engine and adaptive processor as fallback
+	ruleEngine := NewCustomRuleEngine(40.0)
+	adaptiveProcessor := NewAdaptiveSamplingProcessor(AdaptiveSamplingConfig{
+		MaxItemsPerSecond:   100,
+		InitialSamplingRate: 30.0,
+	})
+	
+	processor := NewIntelligentSamplingProcessorWithFallback(ruleEngine, adaptiveProcessor)
+	
+	// Test that it uses the adaptive processor for dependency-aware sampling
+	if processor.GetSamplingRate() != 30.0 {
+		t.Errorf("GetSamplingRate() = %v, want 30.0 (from adaptive processor)", processor.GetSamplingRate())
+	}
+	
+	// Test exception priority still works
+	exceptionEnvelope := &contracts.Envelope{
+		Name: "Microsoft.ApplicationInsights.test.Exception",
+		IKey: "test-key",
+		Tags: map[string]string{
+			contracts.OperationId: "test-exception",
+		},
+	}
+	
+	if !processor.ShouldSample(exceptionEnvelope) {
+		t.Error("Exception should always be sampled even with custom fallback processor")
+	}
+}
+
+func TestTelemetryClientWithIntelligentSampling(t *testing.T) {
+	// Test integration with telemetry client
+	config := NewTelemetryConfiguration("test-key")
+	config.SamplingProcessor = NewIntelligentSamplingProcessor(25.0)
+	
+	client := NewTelemetryClientFromConfig(config)
+	testChannel := &TestTelemetryChannel{}
+	tc := client.(*telemetryClient)
+	tc.channel = testChannel
+	
+	// Track an exception - should always be sent
+	client.TrackException("test error")
+	
+	// Track regular telemetry - may or may not be sent based on sampling
+	client.TrackEvent("regular-event")
+	client.TrackTrace("info message", contracts.Information)
+	
+	// The exception should definitely be in the sent items
+	sentCount := testChannel.getSentCount()
+	if sentCount == 0 {
+		t.Error("Expected at least the exception to be sent")
+	}
+	
+	// Check that at least one item is the exception
+	hasException := false
+	for _, envelope := range testChannel.sentItems {
+		if strings.Contains(envelope.Name, "Exception") {
+			hasException = true
+			break
+		}
+	}
+	
+	if !hasException {
+		t.Error("Exception telemetry should have been sent")
+	}
+}
+
+// Helper functions for tests
+
+func abs(x float64) float64 {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
