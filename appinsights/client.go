@@ -77,6 +77,17 @@ type TelemetryClient interface {
 
 	// Log an availability test result with correlation context
 	TrackAvailabilityWithContext(ctx context.Context, name string, duration time.Duration, success bool)
+
+	// Performance counter management methods
+
+	// StartPerformanceCounterCollection begins periodic collection of performance counters
+	StartPerformanceCounterCollection(config PerformanceCounterConfig)
+
+	// StopPerformanceCounterCollection halts performance counter collection
+	StopPerformanceCounterCollection()
+
+	// IsPerformanceCounterCollectionEnabled returns true if performance counter collection is active
+	IsPerformanceCounterCollectionEnabled() bool
 }
 
 type telemetryClient struct {
@@ -84,6 +95,7 @@ type telemetryClient struct {
 	context           *TelemetryContext
 	isEnabled         bool
 	samplingProcessor SamplingProcessor
+	performanceManager *PerformanceCounterManager
 }
 
 // Creates a new telemetry client instance that submits telemetry with the
@@ -221,4 +233,27 @@ func (tc *telemetryClient) TrackRemoteDependencyWithContext(ctx context.Context,
 // Log an availability test result with correlation context
 func (tc *telemetryClient) TrackAvailabilityWithContext(ctx context.Context, name string, duration time.Duration, success bool) {
 	tc.TrackWithContext(ctx, NewAvailabilityTelemetryWithContext(ctx, name, duration, success))
+}
+
+// StartPerformanceCounterCollection begins periodic collection of performance counters
+func (tc *telemetryClient) StartPerformanceCounterCollection(config PerformanceCounterConfig) {
+	if tc.performanceManager != nil {
+		tc.performanceManager.Stop()
+	}
+	
+	tc.performanceManager = NewPerformanceCounterManager(tc, config)
+	tc.performanceManager.Start()
+}
+
+// StopPerformanceCounterCollection halts performance counter collection
+func (tc *telemetryClient) StopPerformanceCounterCollection() {
+	if tc.performanceManager != nil {
+		tc.performanceManager.Stop()
+		tc.performanceManager = nil
+	}
+}
+
+// IsPerformanceCounterCollectionEnabled returns true if performance counter collection is active
+func (tc *telemetryClient) IsPerformanceCounterCollectionEnabled() bool {
+	return tc.performanceManager != nil
 }

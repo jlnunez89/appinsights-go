@@ -403,6 +403,9 @@ func (c *mockTelemetryClient) TrackRequestWithContext(ctx context.Context, metho
 }
 func (c *mockTelemetryClient) TrackRemoteDependencyWithContext(ctx context.Context, name, dependencyType, target string, success bool) {}
 func (c *mockTelemetryClient) TrackAvailabilityWithContext(ctx context.Context, name string, duration time.Duration, success bool) {}
+func (c *mockTelemetryClient) StartPerformanceCounterCollection(config PerformanceCounterConfig) {}
+func (c *mockTelemetryClient) StopPerformanceCounterCollection() {}
+func (c *mockTelemetryClient) IsPerformanceCounterCollectionEnabled() bool { return false }
 
 func TestHTTPHeaderConstants(t *testing.T) {
 	// Verify header constants are correct
