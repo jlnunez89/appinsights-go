@@ -100,12 +100,12 @@ func (context *TelemetryContext) envelopWithContext(ctx context.Context, item Te
 		if ctx != nil {
 			if corrCtx := GetCorrelationContext(ctx); corrCtx != nil {
 				envelope.Tags[contracts.OperationId] = corrCtx.GetOperationID()
-				
+
 				// Set parent ID if available
 				if parentID := corrCtx.GetParentID(); parentID != "" {
 					envelope.Tags[contracts.OperationParentId] = parentID
 				}
-				
+
 				// Set operation name if available
 				if corrCtx.OperationName != "" {
 					envelope.Tags[contracts.OperationName] = corrCtx.OperationName

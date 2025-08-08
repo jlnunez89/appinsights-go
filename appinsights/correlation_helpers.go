@@ -19,23 +19,23 @@ type SpanContext struct {
 // If a parent context exists, creates a child span; otherwise creates a root span
 func StartSpan(ctx context.Context, operationName string, client TelemetryClient) (context.Context, *SpanContext) {
 	parentCorr := GetCorrelationContext(ctx)
-	
+
 	var corrCtx *CorrelationContext
 	if parentCorr != nil {
 		corrCtx = NewChildCorrelationContext(parentCorr)
 	} else {
 		corrCtx = NewCorrelationContext()
 	}
-	
+
 	corrCtx.OperationName = operationName
-	
+
 	spanCtx := &SpanContext{
 		Context:     corrCtx,
 		Client:      client,
 		StartTime:   time.Now(),
 		OperationID: corrCtx.GetOperationID(),
 	}
-	
+
 	newCtx := WithCorrelationContext(ctx, corrCtx)
 	return newCtx, spanCtx
 }
@@ -45,20 +45,20 @@ func (s *SpanContext) FinishSpan(ctx context.Context, success bool, properties m
 	if s == nil || s.Client == nil {
 		return
 	}
-	
+
 	duration := time.Since(s.StartTime)
-	
+
 	// Track as a dependency by default
 	dependency := NewRemoteDependencyTelemetryWithContext(ctx, s.Context.OperationName, "Internal", "", success)
 	dependency.Duration = duration
 	dependency.MarkTime(s.StartTime, time.Now())
-	
+
 	if properties != nil {
 		for k, v := range properties {
 			dependency.Properties[k] = v
 		}
 	}
-	
+
 	s.Client.TrackWithContext(ctx, dependency)
 }
 
@@ -72,15 +72,15 @@ func WithSpan(ctx context.Context, operationName string, client TelemetryClient,
 			panic(r) // re-throw the panic
 		}
 	}()
-	
+
 	err := fn(spanCtx)
 	success := err == nil
-	
+
 	properties := make(map[string]string)
 	if err != nil {
 		properties["error"] = err.Error()
 	}
-	
+
 	span.FinishSpan(spanCtx, success, properties)
 	return err
 }
@@ -89,23 +89,23 @@ func WithSpan(ctx context.Context, operationName string, client TelemetryClient,
 // This is useful for HTTP handlers and other operations that should be tracked as requests
 func StartOperation(ctx context.Context, operationName string, client TelemetryClient) (context.Context, *OperationContext) {
 	parentCorr := GetCorrelationContext(ctx)
-	
+
 	var corrCtx *CorrelationContext
 	if parentCorr != nil {
 		corrCtx = NewChildCorrelationContext(parentCorr)
 	} else {
 		corrCtx = NewCorrelationContext()
 	}
-	
+
 	corrCtx.OperationName = operationName
-	
+
 	opCtx := &OperationContext{
 		Context:       corrCtx,
 		Client:        client,
 		StartTime:     time.Now(),
 		OperationName: operationName,
 	}
-	
+
 	newCtx := WithCorrelationContext(ctx, corrCtx)
 	return newCtx, opCtx
 }
@@ -123,19 +123,19 @@ func (o *OperationContext) FinishOperation(ctx context.Context, responseCode str
 	if o == nil || o.Client == nil {
 		return
 	}
-	
+
 	duration := time.Since(o.StartTime)
-	
+
 	request := NewRequestTelemetryWithContext(ctx, "OPERATION", url, duration, responseCode)
 	request.Success = success
 	request.MarkTime(o.StartTime, time.Now())
-	
+
 	if properties != nil {
 		for k, v := range properties {
 			request.Properties[k] = v
 		}
 	}
-	
+
 	o.Client.TrackWithContext(ctx, request)
 }
 
@@ -156,20 +156,20 @@ func (h *HTTPRequestCorrelationHelper) StartHTTPOperation(r *http.Request, opera
 	// Extract correlation from headers if present
 	middleware := NewHTTPMiddleware()
 	corrCtx := middleware.ExtractHeaders(r)
-	
+
 	// Create child context if parent exists, otherwise new root
 	if corrCtx != nil {
 		corrCtx = NewChildCorrelationContext(corrCtx)
 	} else {
 		corrCtx = NewCorrelationContext()
 	}
-	
+
 	if operationName != "" {
 		corrCtx.OperationName = operationName
 	}
-	
+
 	ctx := WithCorrelationContext(r.Context(), corrCtx)
-	
+
 	httpOpCtx := &HTTPOperationContext{
 		Context:       corrCtx,
 		Client:        h.Client,
@@ -177,7 +177,7 @@ func (h *HTTPRequestCorrelationHelper) StartHTTPOperation(r *http.Request, opera
 		Request:       r,
 		OperationName: operationName,
 	}
-	
+
 	return ctx, httpOpCtx
 }
 
@@ -195,9 +195,9 @@ func (h *HTTPOperationContext) FinishHTTPOperation(ctx context.Context, response
 	if h == nil || h.Client == nil || h.Request == nil {
 		return
 	}
-	
+
 	duration := time.Since(h.StartTime)
-	
+
 	h.Client.TrackRequestWithContext(ctx, h.Request.Method, h.Request.URL.String(), duration, responseCode)
 }
 
@@ -206,10 +206,10 @@ func (h *HTTPOperationContext) InjectHeadersForOutgoingRequest(outgoingReq *http
 	if h == nil || h.Context == nil || outgoingReq == nil {
 		return
 	}
-	
+
 	// Create child context for outgoing request
 	childCtx := NewChildCorrelationContext(h.Context)
-	
+
 	middleware := NewHTTPMiddleware()
 	middleware.InjectHeaders(outgoingReq, childCtx)
 }
@@ -312,10 +312,10 @@ func CopyCorrelationToRequest(ctx context.Context, req *http.Request) {
 func TrackDependencyWithSpan(ctx context.Context, client TelemetryClient, name, dependencyType, target string, success bool, fn func(context.Context) error) error {
 	return WithSpan(ctx, name, client, func(spanCtx context.Context) error {
 		err := fn(spanCtx)
-		
+
 		// Track the dependency
 		client.TrackRemoteDependencyWithContext(spanCtx, name, dependencyType, target, success && err == nil)
-		
+
 		return err
 	})
 }
@@ -324,31 +324,31 @@ func TrackDependencyWithSpan(ctx context.Context, client TelemetryClient, name, 
 func TrackHTTPDependency(ctx context.Context, client TelemetryClient, req *http.Request, httpClient *http.Client, target string) (*http.Response, error) {
 	// Create child span for the HTTP call
 	childCtx := WithChildSpan(ctx, "HTTP "+req.Method)
-	
+
 	// Inject correlation headers
 	CopyCorrelationToRequest(childCtx, req)
-	
+
 	start := time.Now()
 	resp, err := httpClient.Do(req.WithContext(childCtx))
 	duration := time.Since(start)
-	
+
 	// Track the dependency
 	success := err == nil && resp != nil && resp.StatusCode < 400
 	responseCode := ""
 	if resp != nil {
 		responseCode = strconv.Itoa(resp.StatusCode)
 	}
-	
+
 	dependency := NewRemoteDependencyTelemetryWithContext(childCtx, req.URL.String(), "HTTP", target, success)
 	dependency.Duration = duration
 	dependency.ResultCode = responseCode
 	dependency.Data = req.Method + " " + req.URL.String()
-	
+
 	if err != nil {
 		dependency.Properties["error"] = err.Error()
 	}
-	
+
 	client.TrackWithContext(childCtx, dependency)
-	
+
 	return resp, err
 }
