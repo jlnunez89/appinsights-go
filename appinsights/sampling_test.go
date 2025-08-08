@@ -2,6 +2,7 @@ package appinsights
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -272,6 +273,311 @@ func TestTelemetryClientDefaultSampling(t *testing.T) {
 	
 	if testChannel.getSentCount() != 1 {
 		t.Errorf("Expected 1 telemetry item with default sampling, got %d", testChannel.getSentCount())
+	}
+}
+
+func TestSamplingMetadata(t *testing.T) {
+	tests := []struct {
+		name            string
+		processor       SamplingProcessor
+		expectedSampleRate float64
+	}{
+		{
+			name:            "FixedRate 50% sampling",
+			processor:       NewFixedRateSamplingProcessor(50),
+			expectedSampleRate: 2.0, // 100/50 = 2.0 (each item represents 2 items)
+		},
+		{
+			name:            "FixedRate 10% sampling",
+			processor:       NewFixedRateSamplingProcessor(10),
+			expectedSampleRate: 10.0, // 100/10 = 10.0
+		},
+		{
+			name:            "FixedRate 100% sampling",
+			processor:       NewFixedRateSamplingProcessor(100),
+			expectedSampleRate: 1.0, // 100/100 = 1.0
+		},
+		{
+			name:            "Disabled sampling",
+			processor:       NewDisabledSamplingProcessor(),
+			expectedSampleRate: 1.0, // No sampling, each item represents itself
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			envelope := &contracts.Envelope{
+				Name: "Microsoft.ApplicationInsights.test.Event",
+				IKey: "test-key",
+				Tags: map[string]string{
+					contracts.OperationId: "test-operation-id",
+				},
+			}
+
+			// Call ShouldSample to set metadata
+			tt.processor.ShouldSample(envelope)
+
+			if envelope.SampleRate != tt.expectedSampleRate {
+				t.Errorf("SampleRate = %v, want %v", envelope.SampleRate, tt.expectedSampleRate)
+			}
+		})
+	}
+}
+
+func TestPerTypeSamplingProcessor_Creation(t *testing.T) {
+	typeRates := map[TelemetryType]float64{
+		TelemetryTypeEvent:   50,
+		TelemetryTypeMetric:  25,
+		TelemetryTypeRequest: 100,
+	}
+	
+	processor := NewPerTypeSamplingProcessor(10, typeRates)
+	
+	if processor.GetSamplingRate() != 10 {
+		t.Errorf("GetSamplingRate() = %v, want 10", processor.GetSamplingRate())
+	}
+	
+	if processor.GetSamplingRateForType(TelemetryTypeEvent) != 50 {
+		t.Errorf("GetSamplingRateForType(Event) = %v, want 50", processor.GetSamplingRateForType(TelemetryTypeEvent))
+	}
+	
+	if processor.GetSamplingRateForType(TelemetryTypeTrace) != 10 {
+		t.Errorf("GetSamplingRateForType(Trace) = %v, want 10 (default)", processor.GetSamplingRateForType(TelemetryTypeTrace))
+	}
+}
+
+func TestPerTypeSamplingProcessor_InvalidRates(t *testing.T) {
+	typeRates := map[TelemetryType]float64{
+		TelemetryTypeEvent:  -10,  // Should be clamped to 0
+		TelemetryTypeMetric: 150,  // Should be clamped to 100
+	}
+	
+	processor := NewPerTypeSamplingProcessor(-5, typeRates) // Default should be clamped to 0
+	
+	if processor.GetSamplingRate() != 0 {
+		t.Errorf("GetSamplingRate() = %v, want 0 (clamped)", processor.GetSamplingRate())
+	}
+	
+	if processor.GetSamplingRateForType(TelemetryTypeEvent) != 0 {
+		t.Errorf("GetSamplingRateForType(Event) = %v, want 0 (clamped)", processor.GetSamplingRateForType(TelemetryTypeEvent))
+	}
+	
+	if processor.GetSamplingRateForType(TelemetryTypeMetric) != 100 {
+		t.Errorf("GetSamplingRateForType(Metric) = %v, want 100 (clamped)", processor.GetSamplingRateForType(TelemetryTypeMetric))
+	}
+}
+
+func TestPerTypeSamplingProcessor_TelemetryTypeExtraction(t *testing.T) {
+	processor := NewPerTypeSamplingProcessor(50, map[TelemetryType]float64{})
+	
+	tests := []struct {
+		envelopeName string
+		expectedType TelemetryType
+	}{
+		{
+			envelopeName: "Microsoft.ApplicationInsights.test-key.Event",
+			expectedType: TelemetryTypeEvent,
+		},
+		{
+			envelopeName: "Microsoft.ApplicationInsights.Event",
+			expectedType: TelemetryTypeEvent,
+		},
+		{
+			envelopeName: "Microsoft.ApplicationInsights.test-key.Message",
+			expectedType: TelemetryTypeTrace,
+		},
+		{
+			envelopeName: "Microsoft.ApplicationInsights.test-key.Metric",
+			expectedType: TelemetryTypeMetric,
+		},
+		{
+			envelopeName: "Microsoft.ApplicationInsights.test-key.Request",
+			expectedType: TelemetryTypeRequest,
+		},
+		{
+			envelopeName: "Microsoft.ApplicationInsights.test-key.RemoteDependency",
+			expectedType: TelemetryTypeRemoteDependency,
+		},
+		{
+			envelopeName: "Microsoft.ApplicationInsights.test-key.Exception",
+			expectedType: TelemetryTypeException,
+		},
+		{
+			envelopeName: "Microsoft.ApplicationInsights.test-key.Availability",
+			expectedType: TelemetryTypeAvailability,
+		},
+		{
+			envelopeName: "Microsoft.ApplicationInsights.test-key.PageView",
+			expectedType: TelemetryTypePageView,
+		},
+		{
+			envelopeName: "Microsoft.ApplicationInsights.test-key.Unknown",
+			expectedType: TelemetryType(""),
+		},
+		{
+			envelopeName: "InvalidEnvelopeName",
+			expectedType: TelemetryType(""),
+		},
+		{
+			envelopeName: "",
+			expectedType: TelemetryType(""),
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.envelopeName, func(t *testing.T) {
+			actualType := processor.extractTelemetryType(tt.envelopeName)
+			if actualType != tt.expectedType {
+				t.Errorf("extractTelemetryType(%q) = %v, want %v", tt.envelopeName, actualType, tt.expectedType)
+			}
+		})
+	}
+}
+
+func TestPerTypeSamplingProcessor_SamplingBehavior(t *testing.T) {
+	typeRates := map[TelemetryType]float64{
+		TelemetryTypeEvent:   0,   // 0% sampling - should never sample
+		TelemetryTypeMetric:  100, // 100% sampling - should always sample
+		TelemetryTypeRequest: 50,  // 50% sampling
+	}
+	
+	processor := NewPerTypeSamplingProcessor(10, typeRates) // 10% default
+	
+	tests := []struct {
+		name         string
+		envelopeName string
+		expectedRate float64
+		testCount    int
+		shouldSample []bool // For 0% and 100% cases
+	}{
+		{
+			name:         "Event - 0% sampling",
+			envelopeName: "Microsoft.ApplicationInsights.test.Event",
+			expectedRate: 0,
+			testCount:    100,
+			shouldSample: []bool{false}, // All should be false
+		},
+		{
+			name:         "Metric - 100% sampling",
+			envelopeName: "Microsoft.ApplicationInsights.test.Metric",
+			expectedRate: 100,
+			testCount:    100,
+			shouldSample: []bool{true}, // All should be true
+		},
+		{
+			name:         "Request - 50% sampling",
+			envelopeName: "Microsoft.ApplicationInsights.test.Request",
+			expectedRate: 50,
+			testCount:    1000,
+		},
+		{
+			name:         "Trace - default 10% sampling",
+			envelopeName: "Microsoft.ApplicationInsights.test.Message",
+			expectedRate: 10,
+			testCount:    1000,
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sampled := 0
+			
+			for i := 0; i < tt.testCount; i++ {
+				envelope := &contracts.Envelope{
+					Name: tt.envelopeName,
+					IKey: "test-key",
+					Tags: map[string]string{
+						contracts.OperationId: generateTestOperationId(i),
+					},
+				}
+				
+				if processor.ShouldSample(envelope) {
+					sampled++
+				}
+				
+				// Check that sampling metadata is set correctly
+				expectedSampleRate := 100.0 / tt.expectedRate
+				if tt.expectedRate == 0 {
+					expectedSampleRate = 100.0 / 0.001 // Avoid division by zero, but this should not happen in practice
+				}
+				if envelope.SampleRate != expectedSampleRate && tt.expectedRate > 0 {
+					t.Errorf("SampleRate = %v, want %v", envelope.SampleRate, expectedSampleRate)
+					break
+				}
+			}
+			
+			actualRate := float64(sampled) / float64(tt.testCount) * 100
+			tolerance := 5.0 // 5% tolerance for statistical variation
+			
+			if tt.expectedRate == 0 && sampled != 0 {
+				t.Errorf("Expected 0%% sampling but got %d samples out of %d", sampled, tt.testCount)
+			} else if tt.expectedRate == 100 && sampled != tt.testCount {
+				t.Errorf("Expected 100%% sampling but got %d samples out of %d", sampled, tt.testCount)
+			} else if tt.expectedRate > 0 && tt.expectedRate < 100 {
+				if actualRate < tt.expectedRate-tolerance || actualRate > tt.expectedRate+tolerance {
+					t.Errorf("Sampling rate %v%% is outside tolerance. Expected ~%v%%, got %v%% (%d/%d)", 
+						tt.expectedRate, tt.expectedRate, actualRate, sampled, tt.testCount)
+				}
+			}
+		})
+	}
+}
+
+func TestPerTypeSamplingProcessor_DeterministicSampling(t *testing.T) {
+	typeRates := map[TelemetryType]float64{
+		TelemetryTypeEvent: 50,
+	}
+	processor := NewPerTypeSamplingProcessor(25, typeRates)
+	
+	// Same operation ID should always produce same result for same type
+	envelope := &contracts.Envelope{
+		Name: "Microsoft.ApplicationInsights.test.Event",
+		IKey: "test-key",
+		Tags: map[string]string{
+			contracts.OperationId: "test-operation-id-123",
+		},
+	}
+	
+	firstResult := processor.ShouldSample(envelope)
+	for i := 0; i < 10; i++ {
+		envelope.SampleRate = 0 // Reset to test metadata setting
+		result := processor.ShouldSample(envelope)
+		if result != firstResult {
+			t.Errorf("Sampling decision changed for same operation ID. Expected consistent result.")
+		}
+	}
+}
+
+func TestTelemetryClientWithPerTypeSampling(t *testing.T) {
+	// Test that telemetry client properly uses per-type sampling processor
+	typeRates := map[TelemetryType]float64{
+		TelemetryTypeEvent: 0,   // Block all events
+		TelemetryTypeTrace: 100, // Allow all traces
+	}
+	
+	config := NewTelemetryConfiguration("test-key")
+	config.SamplingProcessor = NewPerTypeSamplingProcessor(50, typeRates)
+	
+	client := NewTelemetryClientFromConfig(config)
+	testChannel := &TestTelemetryChannel{}
+	tc := client.(*telemetryClient)
+	tc.channel = testChannel
+	
+	// Track some telemetry
+	client.TrackEvent("test-event")          // Should be blocked (0%)
+	client.TrackTrace("test-trace", contracts.Information) // Should pass (100%)
+	
+	// Verify correct filtering happened
+	if testChannel.getSentCount() != 1 {
+		t.Errorf("Expected 1 telemetry item (trace only), got %d", testChannel.getSentCount())
+	}
+	
+	// Verify the sent item is the trace
+	if len(testChannel.sentItems) > 0 {
+		envelope := testChannel.sentItems[0]
+		if !strings.Contains(envelope.Name, "Message") {
+			t.Errorf("Expected Message telemetry, got %s", envelope.Name)
+		}
 	}
 }
 
