@@ -19,7 +19,6 @@ const (
 	// Application Insights specific headers
 	RequestContextHeader         = "Request-Context"
 	RequestContextCorrelationKey = "appId"
-// RequestContextTargetKey      = "appId"
 )
 
 // responseWriter wraps http.ResponseWriter to capture status code and response size
