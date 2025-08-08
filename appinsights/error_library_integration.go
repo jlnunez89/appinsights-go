@@ -347,7 +347,7 @@ func (eli *ErrorLibraryIntegration) parseStackString(stackStr string) []*contrac
 	return stackFrames
 }
 
-// parseInt safely parses an integer string
+// parseInt extracts a positive integer from the beginning of a string, stopping at the first non-digit character.
 func parseInt(s string) int {
 	result := 0
 	for _, char := range s {
