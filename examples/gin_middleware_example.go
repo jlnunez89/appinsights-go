@@ -46,6 +46,10 @@ func (g *ginContextAdapter) Get(key string) (interface{}, bool) {
 	return g.Context.Get(key)
 }
 
+func (g *ginContextAdapter) SetRequest(req *http.Request) {
+	g.Context.Request = req
+}
+
 func main() {
 	// Initialize Application Insights client
 	client := appinsights.NewTelemetryClient("your-instrumentation-key")

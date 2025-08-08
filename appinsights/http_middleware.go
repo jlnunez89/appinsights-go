@@ -248,6 +248,7 @@ func (m *HTTPMiddleware) GinMiddleware() interface{} {
 			Next()
 			Set(string, interface{})
 			Get(string) (interface{}, bool)
+			SetRequest(*http.Request)
 		})
 
 		req := ginContext.Request()
@@ -269,7 +270,7 @@ func (m *HTTPMiddleware) GinMiddleware() interface{} {
 
 		// Add correlation context to request context and Gin context
 		ctx := WithCorrelationContext(req.Context(), corrCtx)
-		*req = *req.WithContext(ctx)
+		ginContext.SetRequest(req.WithContext(ctx))
 		ginContext.Set("appinsights_correlation", corrCtx)
 
 		// Set correlation headers in response for client visibility
@@ -321,6 +322,7 @@ func (m *HTTPMiddleware) EchoMiddleware() interface{} {
 				}
 				Set(string, interface{})
 				Get(string) interface{}
+				SetRequest(*http.Request)
 			})
 
 			req := echoContext.Request()
@@ -342,7 +344,7 @@ func (m *HTTPMiddleware) EchoMiddleware() interface{} {
 
 			// Add correlation context to request context and Echo context
 			ctx := WithCorrelationContext(req.Context(), corrCtx)
-			*req = *req.WithContext(ctx)
+			echoContext.SetRequest(req.WithContext(ctx))
 			echoContext.Set("appinsights_correlation", corrCtx)
 
 			// Set correlation headers in response for client visibility

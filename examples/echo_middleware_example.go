@@ -30,7 +30,7 @@ func (e *echoContextAdapter) Request() *http.Request {
 	return e.Context.Request()
 }
 
-func (e *echoContextAdapter) Response() interface {
+func (e *echoContextAdapter) Response() interface{
 	Status() int
 	Writer() http.ResponseWriter
 } {
@@ -43,6 +43,10 @@ func (e *echoContextAdapter) Set(key string, value interface{}) {
 
 func (e *echoContextAdapter) Get(key string) interface{} {
 	return e.Context.Get(key)
+}
+
+func (e *echoContextAdapter) SetRequest(req *http.Request) {
+	e.Context.SetRequest(req)
 }
 
 type echoResponseAdapter struct {

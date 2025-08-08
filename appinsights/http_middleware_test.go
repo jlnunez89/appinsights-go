@@ -700,6 +700,7 @@ type mockGinContext struct {
 func (c *mockGinContext) Request() *http.Request { return c.request }
 func (c *mockGinContext) Writer() http.ResponseWriter { return c.writer }
 func (c *mockGinContext) Next() { c.nextCall = true; if c.next != nil { c.next() } }
+func (c *mockGinContext) SetRequest(req *http.Request) { c.request = req }
 func (c *mockGinContext) Set(key string, value interface{}) {
 	if c.values == nil {
 		c.values = make(map[string]interface{})
@@ -799,6 +800,7 @@ func (c *mockEchoContext) Response() interface {
 } {
 	return c.response
 }
+func (c *mockEchoContext) SetRequest(req *http.Request) { c.request = req }
 func (c *mockEchoContext) Set(key string, value interface{}) {
 	if c.values == nil {
 		c.values = make(map[string]interface{})
