@@ -61,6 +61,9 @@ type TelemetryClient interface {
 	// automatically.
 	TrackException(err interface{})
 
+	// Gets the error auto-collector for this client (if enabled)
+	ErrorAutoCollector() *ErrorAutoCollector
+
 	// Context-aware tracking methods for improved correlation support
 
 	// Log a user action with the specified name and correlation context
@@ -91,11 +94,12 @@ type TelemetryClient interface {
 }
 
 type telemetryClient struct {
-	channel           TelemetryChannel
-	context           *TelemetryContext
-	isEnabled         bool
-	samplingProcessor SamplingProcessor
+	channel            TelemetryChannel
+	context            *TelemetryContext
+	isEnabled          bool
+	samplingProcessor  SamplingProcessor
 	performanceManager *PerformanceCounterManager
+	errorAutoCollector *ErrorAutoCollector
 }
 
 // Creates a new telemetry client instance that submits telemetry with the
@@ -113,12 +117,19 @@ func NewTelemetryClientFromConfig(config *TelemetryConfiguration) TelemetryClien
 		samplingProcessor = NewDisabledSamplingProcessor()
 	}
 
-	return &telemetryClient{
+	client := &telemetryClient{
 		channel:           NewInMemoryChannel(config),
 		context:           config.setupContext(),
 		isEnabled:         true,
 		samplingProcessor: samplingProcessor,
 	}
+
+	// Initialize error auto-collection if configured
+	if config.ErrorAutoCollection != nil {
+		client.errorAutoCollector = NewErrorAutoCollector(client, config.ErrorAutoCollection)
+	}
+
+	return client
 }
 
 // Gets the telemetry context for this client.  Values found on this context
@@ -256,4 +267,9 @@ func (tc *telemetryClient) StopPerformanceCounterCollection() {
 // IsPerformanceCounterCollectionEnabled returns true if performance counter collection is active
 func (tc *telemetryClient) IsPerformanceCounterCollectionEnabled() bool {
 	return tc.performanceManager != nil
+}
+
+// Gets the error auto-collector for this client (if enabled)
+func (tc *telemetryClient) ErrorAutoCollector() *ErrorAutoCollector {
+	return tc.errorAutoCollector
 }

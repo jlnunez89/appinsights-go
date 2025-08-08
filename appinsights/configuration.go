@@ -28,6 +28,9 @@ type TelemetryConfiguration struct {
 
 	// Sampling processor for controlling telemetry volume (optional)
 	SamplingProcessor SamplingProcessor
+
+	// Error auto-collection configuration (optional)
+	ErrorAutoCollection *ErrorAutoCollectionConfig
 }
 
 // Creates a new TelemetryConfiguration object with the specified
