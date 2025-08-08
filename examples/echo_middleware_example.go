@@ -1,11 +1,16 @@
+// +build ignore
+
 package main
 
 // Example of using AppInsights middleware with Echo framework
+// This example uses the "+build ignore" directive to prevent it from being
+// built as part of the main package (since it requires external dependencies).
+//
 // To run this example:
 //   go mod init echo-example
 //   go get github.com/labstack/echo/v4
 //   go get github.com/microsoft/ApplicationInsights-Go/appinsights
-//   go run echo_example.go
+//   go run echo_middleware_example.go
 
 import (
 	"fmt"

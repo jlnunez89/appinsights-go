@@ -1,11 +1,16 @@
+// +build ignore
+
 package main
 
 // Example of using AppInsights middleware with Gin framework
+// This example uses the "+build ignore" directive to prevent it from being
+// built as part of the main package (since it requires external dependencies).
+//
 // To run this example:
 //   go mod init gin-example
 //   go get github.com/gin-gonic/gin
 //   go get github.com/microsoft/ApplicationInsights-Go/appinsights
-//   go run gin_example.go
+//   go run gin_middleware_example.go
 
 import (
 	"fmt"

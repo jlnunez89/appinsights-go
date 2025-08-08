@@ -1,4 +1,13 @@
+// +build ignore
+
 package main
+
+// HTTP Middleware Example
+// This example uses the "+build ignore" directive to prevent it from being
+// built as part of the main package when building with "go build ./...".
+//
+// To run this example:
+//   go run examples/http_middleware_example.go
 
 import (
 	"fmt"
