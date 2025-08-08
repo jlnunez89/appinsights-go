@@ -1,4 +1,13 @@
+// +build ignore
+
 package main
+
+// Intelligent Sampling Example
+// This example uses the "+build ignore" directive to prevent it from being
+// built as part of the main package when building with "go build ./...".
+//
+// To run this example:
+//   go run examples/intelligent_sampling_example.go
 
 import (
 	"fmt"

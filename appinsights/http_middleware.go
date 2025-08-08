@@ -3,6 +3,8 @@ package appinsights
 import (
 	"context"
 	"net/http"
+	"strconv"
+	"time"
 )
 
 // HTTP header constants
@@ -17,8 +19,45 @@ const (
 	// Application Insights specific headers
 	RequestContextHeader         = "Request-Context"
 	RequestContextCorrelationKey = "appId"
-	RequestContextTargetKey      = "appId"
 )
+
+// responseWriter wraps http.ResponseWriter to capture status code and response size
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+	written    int64
+}
+
+// newResponseWriter creates a new response writer wrapper
+func newResponseWriter(w http.ResponseWriter) *responseWriter {
+	return &responseWriter{
+		ResponseWriter: w,
+		statusCode:     200, // Default to 200 if WriteHeader is not called
+	}
+}
+
+// WriteHeader captures the status code and calls the underlying WriteHeader
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.statusCode = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+// Write captures the response size and calls the underlying Write
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	n, err := rw.ResponseWriter.Write(b)
+	rw.written += int64(n)
+	return n, err
+}
+
+// Status returns the HTTP status code
+func (rw *responseWriter) Status() int {
+	return rw.statusCode
+}
+
+// Size returns the number of bytes written
+func (rw *responseWriter) Size() int64 {
+	return rw.written
+}
 
 // HTTPMiddleware provides HTTP middleware for automatic header injection and extraction
 type HTTPMiddleware struct {
@@ -70,10 +109,14 @@ func (m *HTTPMiddleware) InjectHeaders(r *http.Request, corrCtx *CorrelationCont
 }
 
 // Middleware returns an HTTP middleware function that automatically handles correlation
-// This middleware extracts correlation context from incoming requests and makes it available
-// in the request context. It also enables telemetry tracking if a client getter is provided.
+// and request tracking. This middleware extracts correlation context from incoming requests,
+// makes it available in the request context, and tracks request telemetry with accurate
+// timing, status codes, and URL information.
 func (m *HTTPMiddleware) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Record start time for request duration tracking
+		startTime := time.Now()
+
 		// Extract correlation context from headers
 		corrCtx := m.ExtractHeaders(r)
 
@@ -89,21 +132,28 @@ func (m *HTTPMiddleware) Middleware(next http.Handler) http.Handler {
 		ctx := WithCorrelationContext(r.Context(), corrCtx)
 		r = r.WithContext(ctx)
 
-		// Optional: Track the request if client getter is provided
-		if m.GetClient != nil {
-			if client := m.GetClient(r); client != nil {
-				// Track the incoming request
-				// Note: This is a simplified example. In practice, you might want to
-				// track this after the request completes to get accurate timing and status
-				client.TrackRequestWithContext(ctx, r.Method, r.URL.String(), 0, "")
-			}
-		}
+		// Wrap response writer to capture status code and response size
+		rw := newResponseWriter(w)
 
 		// Set correlation headers in response for client visibility
-		m.setResponseHeaders(w, corrCtx)
+		m.setResponseHeaders(rw, corrCtx)
 
 		// Call the next handler
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(rw, r)
+
+		// Track the request telemetry after completion if client getter is provided
+		if m.GetClient != nil {
+			if client := m.GetClient(r); client != nil {
+				// Calculate request duration
+				duration := time.Since(startTime)
+				
+				// Get status code as string
+				responseCode := strconv.Itoa(rw.Status())
+				
+				// Track the completed request with accurate timing and status
+				client.TrackRequestWithContext(ctx, r.Method, r.URL.String(), duration, responseCode)
+			}
+		}
 	})
 }
 
@@ -176,4 +226,149 @@ func GetOrCreateCorrelationFromRequest(r *http.Request) *CorrelationContext {
 	}
 
 	return corrCtx
+}
+
+// GinMiddleware returns a Gin middleware function for automatic request tracking
+// This middleware integrates with the Gin framework to provide correlation context
+// and automatic telemetry tracking with proper timing and status codes.
+//
+// Usage:
+//   middleware := appinsights.NewHTTPMiddleware()
+//   middleware.GetClient = func(*http.Request) TelemetryClient { return client }
+//   router.Use(middleware.GinMiddleware())
+func (m *HTTPMiddleware) GinMiddleware() interface{} {
+	// Return a function that matches Gin's middleware signature: func(*gin.Context)
+	// We use interface{} to avoid importing gin in this core package
+	return func(c interface{}) {
+		// This will be called by Gin with a *gin.Context
+		// We need to extract the http.Request and http.ResponseWriter from it
+		ginContext := c.(interface {
+			Request() *http.Request
+			Writer() http.ResponseWriter
+			Next()
+			Set(string, interface{})
+			Get(string) (interface{}, bool)
+			SetRequest(*http.Request)
+		})
+
+		req := ginContext.Request()
+		w := ginContext.Writer()
+		
+		// Record start time for request duration tracking
+		startTime := time.Now()
+
+		// Extract correlation context from headers
+		corrCtx := m.ExtractHeaders(req)
+
+		// If no correlation context found, create a new one for this request
+		if corrCtx == nil {
+			corrCtx = NewCorrelationContext()
+		} else {
+			// Create a child context for this request to maintain trace hierarchy
+			corrCtx = NewChildCorrelationContext(corrCtx)
+		}
+
+		// Add correlation context to request context and Gin context
+		ctx := WithCorrelationContext(req.Context(), corrCtx)
+		ginContext.SetRequest(req.WithContext(ctx))
+		ginContext.Set("appinsights_correlation", corrCtx)
+
+		// Set correlation headers in response for client visibility
+		m.setResponseHeaders(w, corrCtx)
+
+		// Call the next middleware/handler
+		ginContext.Next()
+
+		// Track the request telemetry after completion if client getter is provided
+		if m.GetClient != nil {
+			if client := m.GetClient(req); client != nil {
+				// Calculate request duration
+				duration := time.Since(startTime)
+				
+				// Get status code - for Gin we need to get it from the writer
+				statusCode := 200 // Default
+				if rw, ok := w.(interface{ Status() int }); ok {
+					statusCode = rw.Status()
+				}
+				responseCode := strconv.Itoa(statusCode)
+				
+				// Track the completed request with accurate timing and status
+				client.TrackRequestWithContext(ctx, req.Method, req.URL.String(), duration, responseCode)
+			}
+		}
+	}
+}
+
+// EchoMiddleware returns an Echo middleware function for automatic request tracking
+// This middleware integrates with the Echo framework to provide correlation context
+// and automatic telemetry tracking with proper timing and status codes.
+//
+// Usage:
+//   middleware := appinsights.NewHTTPMiddleware()
+//   middleware.GetClient = func(*http.Request) TelemetryClient { return client }
+//   e.Use(middleware.EchoMiddleware())
+func (m *HTTPMiddleware) EchoMiddleware() interface{} {
+	// Return a function that matches Echo's middleware signature: func(echo.HandlerFunc) echo.HandlerFunc
+	// We use interface{} to avoid importing echo in this core package
+	return func(next interface{}) interface{} {
+		// Return handler function that matches echo.HandlerFunc signature
+		return func(c interface{}) error {
+			// This will be called by Echo with an echo.Context
+			echoContext := c.(interface {
+				Request() *http.Request
+				Response() interface {
+					Status() int
+					Writer() http.ResponseWriter
+				}
+				Set(string, interface{})
+				Get(string) interface{}
+				SetRequest(*http.Request)
+			})
+
+			req := echoContext.Request()
+			res := echoContext.Response()
+			
+			// Record start time for request duration tracking
+			startTime := time.Now()
+
+			// Extract correlation context from headers
+			corrCtx := m.ExtractHeaders(req)
+
+			// If no correlation context found, create a new one for this request
+			if corrCtx == nil {
+				corrCtx = NewCorrelationContext()
+			} else {
+				// Create a child context for this request to maintain trace hierarchy
+				corrCtx = NewChildCorrelationContext(corrCtx)
+			}
+
+			// Add correlation context to request context and Echo context
+			ctx := WithCorrelationContext(req.Context(), corrCtx)
+			echoContext.SetRequest(req.WithContext(ctx))
+			echoContext.Set("appinsights_correlation", corrCtx)
+
+			// Set correlation headers in response for client visibility
+			m.setResponseHeaders(res.Writer(), corrCtx)
+
+			// Call the next handler
+			nextHandler := next.(func(interface{}) error)
+			err := nextHandler(c)
+
+			// Track the request telemetry after completion if client getter is provided
+			if m.GetClient != nil {
+				if client := m.GetClient(req); client != nil {
+					// Calculate request duration
+					duration := time.Since(startTime)
+					
+					// Get status code from Echo response
+					responseCode := strconv.Itoa(res.Status())
+					
+					// Track the completed request with accurate timing and status
+					client.TrackRequestWithContext(ctx, req.Method, req.URL.String(), duration, responseCode)
+				}
+			}
+
+			return err
+		}
+	}
 }
