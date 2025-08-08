@@ -233,8 +233,10 @@ func (rt *instrumentedRoundTripper) trackDependency(req *http.Request, resp *htt
 
 	// Extract target (host:port)
 	target := req.URL.Host
-	if target == "" && req.URL.Scheme != "" {
-		target = req.URL.Scheme + "://" + req.URL.Host
+	if target == "" && req.Host != "" {
+		target = req.Host
+	} else if target == "" {
+		target = "unknown"
 	}
 
 	// Create dependency name (HTTP method + sanitized path)
