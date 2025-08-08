@@ -15,8 +15,7 @@ This SDK is NOT currently maintained or supported by Microsoft. Azure Monitor on
 Known gaps include:
 * ✅ **Operation correlation** - Fully implemented with W3C Trace Context support and Application Insights correlation
 * ✅ **Sampling** - Comprehensive sampling implementation including fixed-rate, adaptive, and intelligent sampling
-* Automatic collection of events is not supported.  All telemetry must be
-  explicitly collected and sent by the user.
+* ✅ **Automatic collection of events** - Comprehensive auto-collection for HTTP, errors, and performance counters
 * Offline storage of telemetry is not supported.  The .Net SDK is capable of
   spilling events to disk in case of network interruption.  This SDK has no
   such feature.
@@ -588,6 +587,67 @@ defer resp.Body.Close()
 - **Library Support**: Works with standard `http.Client` and popular HTTP libraries
 
 For complete documentation and examples, see: **[HTTP Client Instrumentation Guide](./HTTP_CLIENT_INSTRUMENTATION.md)**
+
+### Automatic Event Collection
+
+The SDK provides comprehensive automatic event collection that reduces instrumentation burden by automatically capturing common telemetry without explicit code changes.
+
+```go
+// Create configuration with automatic event collection
+config := appinsights.NewTelemetryConfiguration("<instrumentation key>")
+config.AutoCollection = appinsights.NewAutoCollectionConfig()
+
+client := appinsights.NewTelemetryClientFromConfig(config)
+
+// Get auto-collection manager
+autoCollection := client.AutoCollection()
+autoCollection.Start()
+defer autoCollection.Stop()
+```
+
+#### Automatic HTTP Tracking
+
+```go
+// HTTP server - automatically track incoming requests
+handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    w.WriteHeader(http.StatusOK)
+    w.Write([]byte("Hello, World!"))
+})
+wrappedHandler := autoCollection.WrapHTTPHandler(handler)
+
+// HTTP client - automatically track outgoing requests
+httpClient := autoCollection.WrapHTTPClient(&http.Client{})
+resp, err := httpClient.Get("https://api.example.com/users")
+```
+
+#### Automatic Error Collection
+
+```go
+// Automatic panic recovery and error tracking
+autoCollection.RecoverPanic(func() {
+    // Code that might panic - automatically tracked
+})
+
+// Manual error tracking with auto-collection features
+autoCollection.TrackError(err) // Includes sanitization and filtering
+```
+
+#### Automatic Performance Metrics
+
+Performance counters are collected automatically in the background:
+- System metrics (CPU, memory, disk)
+- Go runtime metrics (goroutines, GC, memory)
+- Custom business metrics
+
+#### Key Features
+
+- **Zero-Code Instrumentation**: Many scenarios work without code changes
+- **Configurable Collection**: Enable/disable features as needed
+- **Security-First**: Automatic sanitization of sensitive data
+- **Framework Integration**: Built-in support for Gin, Echo, and standard net/http
+- **Performance Optimized**: Minimal overhead with configurable limits
+
+For complete documentation and examples, see: **[Automatic Event Collection Guide](./AUTOMATIC_EVENT_COLLECTION.md)**
 
 ### Shutdown
 The Go SDK submits data asynchronously.  The [InMemoryChannel](https://godoc.org/github.com/microsoft/ApplicationInsights-Go/appinsights/#InMemoryChannel)

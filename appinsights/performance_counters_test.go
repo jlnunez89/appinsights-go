@@ -44,6 +44,7 @@ func (m *mockTelemetryClientForPC) StartPerformanceCounterCollection(config Perf
 func (m *mockTelemetryClientForPC) StopPerformanceCounterCollection()              {}
 func (m *mockTelemetryClientForPC) IsPerformanceCounterCollectionEnabled() bool    { return false }
 func (m *mockTelemetryClientForPC) ErrorAutoCollector() *ErrorAutoCollector { return nil }
+func (m *mockTelemetryClientForPC) AutoCollection() *AutoCollectionManager { return nil }
 
 func (m *mockTelemetryClientForPC) TrackMetric(name string, value float64) {
 	m.mu.Lock()

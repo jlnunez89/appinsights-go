@@ -31,6 +31,9 @@ type TelemetryConfiguration struct {
 
 	// Error auto-collection configuration (optional)
 	ErrorAutoCollection *ErrorAutoCollectionConfig
+
+	// Automatic event collection configuration (optional)
+	AutoCollection *AutoCollectionConfig
 }
 
 // Creates a new TelemetryConfiguration object with the specified
