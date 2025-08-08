@@ -1,0 +1,4 @@
+code.cloudfoundry.org/clock v1.38.0 h1:J1npQp51j39eYbonodCngIka8zPMJhxUZvEUQOXnPNg=
+code.cloudfoundry.org/clock v1.38.0/go.mod h1:M9emWHvFbJgO5/oxpMLvUzyYl1p4uxtey4+YKYUDvWA=
+github.com/gofrs/uuid/v5 v5.3.2 h1:2jfO8j3XgSwlz/wHqemAEugfnTlikAYHhnqQ8Xh4fE0=
+github.com/gofrs/uuid/v5 v5.3.2/go.mod h1:CDOjlDMVAtN56jqyRUZh58JT31Tiw7/oQyEXZV+9bD8=
