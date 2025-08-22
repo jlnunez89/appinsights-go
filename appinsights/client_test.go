@@ -48,7 +48,7 @@ func TestClientProperties(t *testing.T) {
 		t.Error("Client.SetIsEnabled had no effect")
 	}
 
-	if client.Channel().EndpointAddress() != "https://dc.services.visualstudio.com/v2/track" {
+	if client.Channel().EndpointAddress() != DefaultIngestionEndpoint {
 		t.Error("Client.Channel.EndpointAddress was incorrect")
 	}
 }
@@ -59,7 +59,7 @@ func TestEndToEnd(t *testing.T) {
 	xmit, server := newTestClientServer()
 	defer server.Close()
 
-	config := NewTelemetryConfiguration(test_ikey)
+	config := NewTelemetryConfiguration("InstrumentationKey=" + test_ikey)
 	config.EndpointUrl = xmit.(*httpTransmitter).endpoint
 	client := NewTelemetryClientFromConfig(config)
 	defer client.Channel().Close()

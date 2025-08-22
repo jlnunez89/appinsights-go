@@ -2,6 +2,7 @@ package appinsights
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -207,7 +208,7 @@ func TestCalculateSamplingHash(t *testing.T) {
 
 func TestTelemetryClientWithSampling(t *testing.T) {
 	// Test that telemetry client properly uses sampling processor
-	config := NewTelemetryConfiguration("test-key")
+	config := NewTelemetryConfiguration("InstrumentationKey=test-key")
 	config.SamplingProcessor = NewFixedRateSamplingProcessor(0) // 0% sampling
 
 	client := NewTelemetryClientFromConfig(config)
@@ -244,7 +245,7 @@ func TestTelemetryClientWithSampling(t *testing.T) {
 
 func TestTelemetryClientWithContextSampling(t *testing.T) {
 	// Test that context-aware tracking also respects sampling
-	config := NewTelemetryConfiguration("test-key")
+	config := NewTelemetryConfiguration("InstrumentationKey=test-key")
 	config.SamplingProcessor = NewFixedRateSamplingProcessor(0) // 0% sampling
 
 	client := NewTelemetryClientFromConfig(config)
@@ -263,7 +264,7 @@ func TestTelemetryClientWithContextSampling(t *testing.T) {
 
 func TestTelemetryClientDefaultSampling(t *testing.T) {
 	// Test that client without explicit sampling processor uses disabled sampling (100%)
-	config := NewTelemetryConfiguration("test-key")
+	config := NewTelemetryConfiguration("InstrumentationKey=test-key")
 	// Don't set SamplingProcessor - should default to disabled
 
 	client := NewTelemetryClientFromConfig(config)
@@ -463,7 +464,7 @@ func TestVolumeCounter_EmptyCounter(t *testing.T) {
 }
 
 func TestTelemetryClientWithAdaptiveSampling(t *testing.T) {
-	config := NewTelemetryConfiguration("test-key")
+	config := NewTelemetryConfiguration("InstrumentationKey=test-key")
 	adaptiveConfig := AdaptiveSamplingConfig{
 		MaxItemsPerSecond:   50,
 		InitialSamplingRate: 100,
@@ -860,7 +861,7 @@ func TestTelemetryClientWithPerTypeSampling(t *testing.T) {
 		TelemetryTypeTrace: 100, // Allow all traces
 	}
 
-	config := NewTelemetryConfiguration("test-key")
+	config := NewTelemetryConfiguration("InstrumentationKey=test-key")
 	config.SamplingProcessor = NewPerTypeSamplingProcessor(50, typeRates)
 
 	client := NewTelemetryClientFromConfig(config)
@@ -927,46 +928,6 @@ func TestSamplingMetadataEdgeCases(t *testing.T) {
 			}
 		})
 	}
-}
-
-// Helper function to generate test operation IDs
-func generateTestOperationId(seed int) string {
-	return newUUID().String()
-}
-
-// TestTelemetryChannel for testing purposes
-type TestTelemetryChannel struct {
-	sentItems []*contracts.Envelope
-}
-
-func (tc *TestTelemetryChannel) EndpointAddress() string {
-	return "test://endpoint"
-}
-
-func (tc *TestTelemetryChannel) Send(item *contracts.Envelope) {
-	tc.sentItems = append(tc.sentItems, item)
-}
-
-func (tc *TestTelemetryChannel) Flush() {}
-
-func (tc *TestTelemetryChannel) Stop() {}
-
-func (tc *TestTelemetryChannel) IsThrottled() bool {
-	return false
-}
-
-func (tc *TestTelemetryChannel) Close(retryTimeout ...time.Duration) <-chan struct{} {
-	ch := make(chan struct{})
-	close(ch)
-	return ch
-}
-
-func (tc *TestTelemetryChannel) getSentCount() int {
-	return len(tc.sentItems)
-}
-
-func (tc *TestTelemetryChannel) reset() {
-	tc.sentItems = nil
 }
 
 func TestAdaptiveSamplingProcessor_RateAdjustment(t *testing.T) {
@@ -1787,7 +1748,7 @@ func TestIntelligentSamplingProcessor_WithFallbackProcessor(t *testing.T) {
 
 func TestTelemetryClientWithIntelligentSampling(t *testing.T) {
 	// Test integration with telemetry client
-	config := NewTelemetryConfiguration("test-key")
+	config := NewTelemetryConfiguration("InstrumentationKey=test-key")
 	config.SamplingProcessor = NewIntelligentSamplingProcessor(25.0)
 
 	client := NewTelemetryClientFromConfig(config)
@@ -1829,4 +1790,48 @@ func abs(x float64) float64 {
 		return -x
 	}
 	return x
+}
+
+// generateTestOperationId returns a deterministic operation ID for sampling tests
+func generateTestOperationId(i int) string {
+	return "op" + strconv.Itoa(i)
+}
+
+// TestTelemetryChannel is a minimal TelemetryChannel implementation for tests
+// that captures sent envelopes without performing any network operations.
+type TestTelemetryChannel struct {
+	sentItems []*contracts.Envelope
+	mutex     sync.Mutex
+}
+
+func (c *TestTelemetryChannel) EndpointAddress() string { return "" }
+
+func (c *TestTelemetryChannel) Send(e *contracts.Envelope) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.sentItems = append(c.sentItems, e)
+}
+
+func (c *TestTelemetryChannel) Flush() {}
+
+func (c *TestTelemetryChannel) Stop() {}
+
+func (c *TestTelemetryChannel) IsThrottled() bool { return false }
+
+func (c *TestTelemetryChannel) Close(retryTimeout ...time.Duration) <-chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}
+
+func (c *TestTelemetryChannel) getSentCount() int {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	return len(c.sentItems)
+}
+
+func (c *TestTelemetryChannel) reset() {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.sentItems = nil
 }

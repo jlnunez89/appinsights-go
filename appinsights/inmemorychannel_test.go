@@ -84,7 +84,7 @@ func newTestChannelServer(config ...*TelemetryConfiguration) (TelemetryClient, *
 	if len(config) > 0 {
 		client = NewTelemetryClientFromConfig(config[0])
 	} else {
-		config := NewTelemetryConfiguration("")
+		config := NewTelemetryConfiguration("InstrumentationKey=test-key")
 		config.MaxBatchInterval = ten_seconds // assumed by every test.
 		client = NewTelemetryClientFromConfig(config)
 	}
@@ -319,7 +319,7 @@ func TestSendOnBufferFull(t *testing.T) {
 	mockClock()
 	defer resetClock()
 
-	config := NewTelemetryConfiguration("")
+	config := NewTelemetryConfiguration("InstrumentationKey=test-key")
 	config.MaxBatchSize = 4
 	client, transmitter := newTestChannelServer(config)
 	defer transmitter.Close()
@@ -437,7 +437,7 @@ func TestPartialRetry(t *testing.T) {
 func TestThrottleDropsMessages(t *testing.T) {
 	mockClock()
 	defer resetClock()
-	config := NewTelemetryConfiguration("")
+	config := NewTelemetryConfiguration("InstrumentationKey=test-key")
 	config.MaxBatchSize = 4
 	client, transmitter := newTestChannelServer(config)
 	defer client.Channel().Stop()
@@ -482,7 +482,7 @@ func TestThrottleDropsMessages(t *testing.T) {
 func TestThrottleCannotFlush(t *testing.T) {
 	mockClock()
 	defer resetClock()
-	config := NewTelemetryConfiguration("")
+	config := NewTelemetryConfiguration("InstrumentationKey=test-key")
 	config.MaxBatchSize = 4
 	client, transmitter := newTestChannelServer(config)
 	defer client.Channel().Stop()
@@ -516,7 +516,7 @@ func TestThrottleCannotFlush(t *testing.T) {
 func TestThrottleFlushesOnClose(t *testing.T) {
 	mockClock()
 	defer resetClock()
-	config := NewTelemetryConfiguration("")
+	config := NewTelemetryConfiguration("InstrumentationKey=test-key")
 	config.MaxBatchSize = 4
 	client, transmitter := newTestChannelServer(config)
 	defer transmitter.Close()
@@ -560,7 +560,7 @@ func TestThrottleFlushesOnClose(t *testing.T) {
 func TestThrottleAbandonsMessageOnStop(t *testing.T) {
 	mockClock()
 	defer resetClock()
-	config := NewTelemetryConfiguration("")
+	config := NewTelemetryConfiguration("InstrumentationKey=test-key")
 	config.MaxBatchSize = 4
 	client, transmitter := newTestChannelServer(config)
 	defer transmitter.Close()
@@ -589,7 +589,7 @@ func TestThrottleAbandonsMessageOnStop(t *testing.T) {
 func TestThrottleStacking(t *testing.T) {
 	mockClock()
 	defer resetClock()
-	config := NewTelemetryConfiguration("")
+	config := NewTelemetryConfiguration("InstrumentationKey=test-key")
 	config.MaxBatchSize = 1
 	client, transmitter := newTestChannelServer(config)
 	defer transmitter.Close()

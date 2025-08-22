@@ -96,6 +96,26 @@ func (tags ApplicationContextTags) SetVer(value string) {
 	}
 }
 
+// Application Id. Information in the application context fields is
+// always about the application that is sending the telemetry.
+func (tags ApplicationContextTags) GetId() string {
+	if result, ok := tags["ai.application.id"]; ok {
+		return result
+	}
+
+	return ""
+}
+
+// Application Id. Information in the application context fields is
+// always about the application that is sending the telemetry.
+func (tags ApplicationContextTags) SetId(value string) {
+	if value != "" {
+		tags["ai.application.id"] = value
+	} else {
+		delete(tags, "ai.application.id")
+	}
+}
+
 // Unique client device id. Computer name in most cases.
 func (tags DeviceContextTags) GetId() string {
 	if result, ok := tags["ai.device.id"]; ok {
