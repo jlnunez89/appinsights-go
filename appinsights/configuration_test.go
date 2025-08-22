@@ -3,10 +3,11 @@ package appinsights
 import "testing"
 
 func TestTelemetryConfiguration(t *testing.T) {
+	// Connection string now required
 	testKey := "test"
-	defaultEndpoint := "https://dc.services.visualstudio.com/v2/track"
+	defaultEndpoint := DefaultIngestionEndpoint
 
-	config := NewTelemetryConfiguration(testKey)
+	config := NewTelemetryConfiguration("InstrumentationKey=" + testKey)
 
 	if config.InstrumentationKey != testKey {
 		t.Errorf("InstrumentationKey is %s, want %s", config.InstrumentationKey, testKey)
@@ -27,9 +28,10 @@ func TestTelemetryConfiguration(t *testing.T) {
 }
 
 func TestTelemetryConfigurationWithSampling(t *testing.T) {
+	// Connection string now required
 	testKey := "test-sampling"
 
-	config := NewTelemetryConfiguration(testKey)
+	config := NewTelemetryConfiguration("InstrumentationKey=" + testKey)
 
 	// Test setting a sampling processor
 	processor := NewFixedRateSamplingProcessor(50.0)

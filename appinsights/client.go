@@ -2,6 +2,7 @@ package appinsights
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/microsoft/ApplicationInsights-Go/appinsights/contracts"
@@ -97,19 +98,24 @@ type TelemetryClient interface {
 }
 
 type telemetryClient struct {
-	channel            TelemetryChannel
-	context            *TelemetryContext
-	isEnabled          bool
-	samplingProcessor  SamplingProcessor
-	performanceManager *PerformanceCounterManager
-	errorAutoCollector *ErrorAutoCollector
+	channel               TelemetryChannel
+	context               *TelemetryContext
+	isEnabled             bool
+	samplingProcessor     SamplingProcessor
+	performanceManager    *PerformanceCounterManager
+	errorAutoCollector    *ErrorAutoCollector
 	autoCollectionManager *AutoCollectionManager
 }
 
 // Creates a new telemetry client instance that submits telemetry with the
 // specified instrumentation key.
 func NewTelemetryClient(iKey string) TelemetryClient {
-	return NewTelemetryClientFromConfig(NewTelemetryConfiguration(iKey))
+	// Backward compatibility: allow passing just the instrumentation key
+	cs := iKey
+	if !strings.Contains(iKey, "=") && iKey != "" {
+		cs = "InstrumentationKey=" + iKey
+	}
+	return NewTelemetryClientFromConfig(NewTelemetryConfiguration(cs))
 }
 
 // Creates a new telemetry client instance configured by the specified
@@ -127,6 +133,8 @@ func NewTelemetryClientFromConfig(config *TelemetryConfiguration) TelemetryClien
 		isEnabled:         true,
 		samplingProcessor: samplingProcessor,
 	}
+
+	client.context.Tags.Application().SetId(config.ApplicationId)
 
 	// Initialize error auto-collection if configured
 	if config.ErrorAutoCollection != nil {
@@ -260,7 +268,7 @@ func (tc *telemetryClient) StartPerformanceCounterCollection(config PerformanceC
 	if tc.performanceManager != nil {
 		tc.performanceManager.Stop()
 	}
-	
+
 	tc.performanceManager = NewPerformanceCounterManager(tc, config)
 	tc.performanceManager.Start()
 }
